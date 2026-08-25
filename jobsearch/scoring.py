@@ -10,9 +10,9 @@ SELECT j.id, j.title, j.company, j.location, j.arrangement, j.employment_type,
        j.salary_min, j.salary_max, j.salary_currency, j.salary_period,
        j.salary_source, j.salary_monthly_eur,
        GROUP_CONCAT(DISTINCT s.name)  AS sources,
-       (SELECT js2.url FROM job_sources js2 WHERE js2.job_id = j.id
+       (SELECT js2.url FROM job_sources js2 WHERE js2.job_id = j.id AND js2.inactive_at IS NULL
          ORDER BY (js2.source_id = j.canonical_source_id) DESC, js2.id LIMIT 1) AS url,
-       (SELECT js3.description FROM job_sources js3 WHERE js3.job_id = j.id
+       (SELECT js3.description FROM job_sources js3 WHERE js3.job_id = j.id AND js3.inactive_at IS NULL
          ORDER BY (js3.source_id = j.canonical_source_id) DESC,
                   CHAR_LENGTH(js3.description) DESC LIMIT 1) AS description
 FROM jobs j
@@ -55,7 +55,7 @@ def unscored(conn, profile, limit: int = 60) -> list[dict]:
         return _shape(list(cur.fetchall()), COARSE_CHARS)
 
 
-def coarse_passed(conn, profile, minimum: int = 6) -> list[dict]:
+def coarse_passed(conn, profile, minimum: int = 6, limit: int = 60) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             _BASE_SELECT + _NO_PASS +
@@ -65,9 +65,9 @@ def coarse_passed(conn, profile, minimum: int = 6) -> list[dict]:
                 WHERE sc1.job_id = j.id AND sc1.`pass` = 1
                   AND sc1.profile_hash = %s AND sc1.score >= %s
               )
-            GROUP BY j.id ORDER BY j.first_seen_at DESC
+            GROUP BY j.id ORDER BY j.first_seen_at DESC LIMIT %s
             """,
-            (2, profile.hash, profile.hash, minimum),
+            (2, profile.hash, profile.hash, minimum, limit),
         )
         return _shape(list(cur.fetchall()), None)
 

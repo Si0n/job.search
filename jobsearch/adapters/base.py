@@ -5,7 +5,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -13,6 +13,12 @@ from bs4 import BeautifulSoup
 from jobsearch.models import ParseResult, RawFetch, RawPosting
 
 REQUIRED_FIELDS = ("external_id", "url", "title", "company")
+# urljoin("https://djinni.co", "javascript:alert(1)") returns the scheme
+# unchanged — a hostile href would otherwise land verbatim in job_sources.url.
+# Checked here, not in store.upsert_posting, so one poisoned posting is
+# skipped (counted in diagnostics["dropped"]) rather than raising mid-loop
+# and killing the whole source via _harvest_source's broad catch.
+ALLOWED_URL_SCHEMES = ("http", "https")
 USER_AGENT = "jobsearch/0.1 (personal job search agent; contact via repository owner)"
 TIMEOUT = httpx.Timeout(20.0)
 
@@ -151,6 +157,9 @@ class HtmlAdapter(Adapter):
             if any(values.get(name) is None for name in REQUIRED_FIELDS):
                 diagnostics["dropped"] += 1
                 continue
+            if urlparse(values["url"]).scheme.lower() not in ALLOWED_URL_SCHEMES:
+                diagnostics["dropped"] += 1
+                continue
 
             posting = RawPosting(
                 external_id=values["external_id"],
@@ -236,6 +245,9 @@ class JsonAdapter(Adapter):
                     counts[name] += 1
 
             if any(values.get(name) is None for name in REQUIRED_FIELDS):
+                diagnostics["dropped"] += 1
+                continue
+            if urlparse(values["url"]).scheme.lower() not in ALLOWED_URL_SCHEMES:
                 diagnostics["dropped"] += 1
                 continue
 

@@ -55,9 +55,15 @@ def _harvest_source(conn, settings, source: dict) -> dict:
             # conditional request. The body is empty by definition, and
             # feeding an empty body to adapter.parse() would hit the "no
             # items" path and get classified `broken` — wrongly degrading a
-            # perfectly healthy source. Treat it as an uneventful `ok` run.
+            # perfectly healthy source. Treat it as an uneventful run.
+            #
+            # mark_source_ran, NOT mark_source: advancing last_ok_at here would
+            # tell sweep every posting was reconfirmed, but a 304 means nothing
+            # was parsed at all — no posting's last_seen_at moved. Three 304s
+            # would then age (and eventually deactivate) the source's entire
+            # inventory despite the listing being byte-identical to last time.
             summary["status"] = "not_modified"
-            store.mark_source(conn, source["id"], "ok", saw_items=False, now=now)
+            store.mark_source_ran(conn, source["id"], now)
             store.finish_run(conn, run_id, fetched=0, new=0)
             return summary
 

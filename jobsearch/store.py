@@ -72,13 +72,14 @@ def list_jobs(conn, *, status=None, min_score=None, since=None, source=None,
             "       sc.score, sc.verdict, sc.dimensions, sc.hard_concerns, "
             "       a.status, a.note, "
             "       (SELECT js2.url FROM job_sources js2 WHERE js2.job_id = j.id "
+            "         AND js2.inactive_at IS NULL "
             "         ORDER BY (js2.source_id = j.canonical_source_id) DESC, js2.id "
             "         LIMIT 1) AS url, "
             "       GROUP_CONCAT(DISTINCT s.name) AS sources "
             "FROM jobs j "
             "LEFT JOIN scores sc      ON sc.id = j.latest_score_id "
             "LEFT JOIN applications a ON a.job_id = j.id "
-            "JOIN job_sources js      ON js.job_id = j.id "
+            "JOIN job_sources js      ON js.job_id = j.id AND js.inactive_at IS NULL "
             "JOIN sources s           ON s.id = js.source_id "
             f"WHERE {' AND '.join(clauses)} "
             "GROUP BY j.id ORDER BY sc.score DESC, j.first_seen_at DESC LIMIT %s",
@@ -313,6 +314,11 @@ def _refresh_canonical(conn, job_id: int, source: dict, posting: RawPosting,
 
 
 def mark_source(conn, source_id: int, status: str, saw_items: bool, now: datetime) -> None:
+    """Record the outcome of a full-inventory read: a harvest that actually parsed
+    a listing page. `last_ok_at` is the sweep's contract that every still-active
+    posting was reconfirmed — only call this when that's true. A 304 or an
+    `ingest` batch is never a full-inventory read; use mark_source_ran for those.
+    """
     with conn.cursor() as cur:
         if status == "ok":
             cur.execute(
@@ -326,4 +332,20 @@ def mark_source(conn, source_id: int, status: str, saw_items: bool, now: datetim
                 "last_run_at=%s WHERE id=%s",
                 (status, 0 if saw_items else 1, now, source_id),
             )
+    conn.commit()
+
+
+def mark_source_ran(conn, source_id: int, now: datetime) -> None:
+    """Record that a run touched this source without asserting anything about its
+    inventory. Two callers need exactly this: a 304 (the site confirmed nothing
+    byte-different since last time, so nothing can have disappeared either) and
+    `ingest` (never a full-inventory read of a board, so a partial batch must not
+    vouch for postings it didn't include).
+
+    Deliberately never touches `status` or `last_ok_at` — advancing `last_ok_at`
+    is what tells sweep's aging predicate every active posting was reconfirmed,
+    which neither caller can claim.
+    """
+    with conn.cursor() as cur:
+        cur.execute("UPDATE sources SET last_run_at=%s WHERE id=%s", (now, source_id))
     conn.commit()

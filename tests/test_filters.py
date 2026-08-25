@@ -68,8 +68,12 @@ def test_excluded_company_fails_regardless_of_legal_suffix():
     assert evaluate(job(company="Evil Corp Ltd."), RULES).passed is False
 
 
-def test_missing_required_language_fails_only_when_text_is_present():
-    assert evaluate(job(text="senior php developer, laravel"), RULES).passed is False
+def test_languages_required_is_not_a_hard_filter():
+    # Absent is not a violation — the same rule that governs every other filter.
+    # languages_required can't reliably tell "no requirement stated" apart from
+    # "requires a language the owner lacks," so it's left to scoring entirely;
+    # a posting that never mentions a required language must still pass.
+    assert evaluate(job(text="senior php developer, laravel"), RULES).passed is True
     assert evaluate(job(text=""), RULES).passed is True
 
 

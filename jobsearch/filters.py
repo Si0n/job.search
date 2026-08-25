@@ -49,11 +49,11 @@ def evaluate(job: dict, rules: dict) -> FilterVerdict:
         if keyword.lower() in text:
             return FilterVerdict(False, f"excluded keyword '{keyword.lower()}'")
 
-    required = rules.get("languages_required") or []
-    if required and text:
-        missing = [lang for lang in required if lang.lower() not in text]
-        if len(missing) == len(required):
-            return FilterVerdict(False, f"no required language mentioned: {required}")
+    # No languages_required rule: a posting simply not mentioning a language is
+    # absent data, not a violation, and a keyword-presence check can't tell that
+    # apart from "explicitly requires a language the owner lacks" — the one case
+    # that should fail. Undetectable reliably from free text, so this is left to
+    # scoring, same treatment as domain_fit.
 
     return PASSED
 

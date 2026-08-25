@@ -82,6 +82,19 @@ def test_items_missing_required_fields_are_dropped_and_all_dropped_is_broken():
     assert result.diagnostics["dropped"] == 1
 
 
+def test_a_javascript_url_is_dropped_and_counted():
+    body = json.dumps([
+        {"legal": "notice"},
+        {"id": "2001", "url": "javascript:alert(1)", "position": "Evil Job", "company": "Evil Corp"},
+        {"id": "2002", "url": "https://remoteok.com/l/2002", "position": "Good Job", "company": "Acme"},
+    ]).encode()
+    result = _Probe().parse(_raw(body), SELECTORS)
+    assert result.status == "ok"
+    assert len(result.postings) == 1
+    assert result.postings[0].external_id == "2002"
+    assert result.diagnostics["dropped"] == 1
+
+
 def _blank_posting() -> RawPosting:
     return RawPosting(external_id="1", url="https://x", title="t", company="c", description="")
 

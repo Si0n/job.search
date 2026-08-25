@@ -9,9 +9,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from jobsearch import dashboard, db, store
+from jobsearch.models import APPLICATION_STATUSES
 
-VALID_STATUSES = {"interested", "skipped", "applied", "replied",
-                  "rejected", "interviewing", "offer"}
+VALID_STATUSES = set(APPLICATION_STATUSES)
 MAX_NOTE = 2000
 STATIC = Path(__file__).parent / "static"
 

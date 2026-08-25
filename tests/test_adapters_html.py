@@ -121,6 +121,39 @@ def test_below_minimum_items_classifies_broken_but_keeps_the_postings():
     assert len(result.postings) == 1
 
 
+# external_id comes from a separate node here (not from the href, as SELECTORS
+# does), so a hostile scheme is isolated as the sole reason the first item is
+# dropped rather than incidentally failing the external_id regex too.
+JAVASCRIPT_URL_SELECTORS = {
+    "container": "ul.jobs",
+    "item": "li.job",
+    "minimum_items": 1,
+    "fields": {
+        "external_id": {"selector": ".ext-id", "attr": "text"},
+        "url":         {"selector": "a.title", "attr": "href", "absolute": True},
+        "title":       {"selector": "a.title", "attr": "text"},
+        "company":     {"selector": ".company", "attr": "text"},
+    },
+}
+
+JAVASCRIPT_URL = b"""<html><body><ul class="jobs">
+<li class="job"><span class="ext-id">501</span>
+<a class="title" href="javascript:alert(document.cookie)">Evil Job</a>
+<span class="company">Evil Corp</span></li>
+<li class="job"><span class="ext-id">502</span>
+<a class="title" href="/jobs/502">Good Job</a>
+<span class="company">Acme</span></li>
+</ul></body></html>"""
+
+
+def test_a_javascript_url_is_dropped_and_counted():
+    result = _Probe().parse(_raw(JAVASCRIPT_URL), JAVASCRIPT_URL_SELECTORS)
+    assert result.status == "ok"
+    assert len(result.postings) == 1
+    assert result.postings[0].external_id == "502"
+    assert result.diagnostics["dropped"] == 1
+
+
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "djinni"
 SELECTORS_PATH = FIXTURES / "selectors.json"
 

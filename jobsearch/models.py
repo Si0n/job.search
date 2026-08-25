@@ -7,6 +7,15 @@ from typing import Literal
 
 ParseStatus = Literal["ok", "empty", "broken"]
 
+# Single source of truth for applications.status — mirrors the SQL ENUM in
+# migrations/001_init.sql (not changed here; edit both together if it ever
+# changes). cli.py and server.py both validate against this instead of each
+# keeping their own copy.
+APPLICATION_STATUSES = (
+    "interested", "skipped", "applied", "replied",
+    "rejected", "interviewing", "offer",
+)
+
 
 @dataclass(frozen=True)
 class RawFetch:

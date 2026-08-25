@@ -83,12 +83,13 @@ def run(conn, settings, source_name: str, payload: list[dict]) -> dict:
             accepted += 1
             new += int(is_new)
 
-        # A batch that was entirely rejected is not evidence the source is
-        # healthy — advancing last_ok_at here would let the activity sweep
-        # start ageing every posting this source already has on the strength
-        # of a run that stored nothing.
-        if accepted:
-            store.mark_source(conn, source["id"], "ok", saw_items=True, now=now)
+        # This is never a full-inventory read of a board — it's postings gathered
+        # by some other means (typically repair.md's hand-recovery of a degraded
+        # source). mark_source_ran only stamps last_run_at: it must not flip
+        # status back to 'ok' (the parser may still be broken) or advance
+        # last_ok_at (a partial batch would then let the sweep start ageing
+        # every posting this source has that the batch didn't include).
+        store.mark_source_ran(conn, source["id"], now)
         store.finish_run(conn, run_id, fetched=accepted, new=new)
     except Exception as exc:
         store.finish_run(conn, run_id, error=f"{type(exc).__name__}: {exc}")

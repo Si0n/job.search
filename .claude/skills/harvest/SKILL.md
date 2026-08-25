@@ -78,12 +78,18 @@ jobsearch score --id <job_id> --run-id <run_id> --pass 1 --json '{"score": <n>}'
 ## Step 4 — Score, pass 2 (full evaluation)
 
 ```bash
-jobsearch queue --coarse-passed --min 6
+jobsearch queue --coarse-passed --min 6 --limit 60
 ```
 
-Each job now carries its full, untruncated description. Score every job against
-`profile` using `weights` — both come from this payload, from `profile.yaml`. Never
-hardcode a weight or a dimension list in this file; read them from the JSON.
+Each job now carries its full, untruncated description — unbounded, unlike pass 1's
+800-character fragment, so `--limit` matters even more here: it's the only thing
+capping how many full descriptions this step sends. Compare the returned `count`
+against the `--limit` you passed (60), exactly as in Step 3 — if they're equal, more
+coarse-passed survivors remain and the summary must say so.
+
+Score every job against `profile` using `weights` — both come from this payload, from
+`profile.yaml`. Never hardcode a weight or a dimension list in this file; read them
+from the JSON.
 
 ### The rubric
 

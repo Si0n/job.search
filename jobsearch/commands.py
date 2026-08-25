@@ -84,7 +84,7 @@ def queue(args) -> dict:
             jobs = scoring.unscored(conn, profile, args.limit)
             mode = "unscored"
         else:
-            jobs = scoring.coarse_passed(conn, profile, args.min)
+            jobs = scoring.coarse_passed(conn, profile, args.min, args.limit)
             mode = "coarse-passed"
     finally:
         conn.close()
