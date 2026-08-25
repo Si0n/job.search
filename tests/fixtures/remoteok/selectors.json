@@ -1,0 +1,12 @@
+{
+  "root": "",
+  "skip_first": true,
+  "fields": {
+    "external_id": "id",
+    "url": "url",
+    "title": "position",
+    "company": "company",
+    "location": "location",
+    "description": "description"
+  }
+}

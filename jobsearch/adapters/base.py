@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -160,4 +161,88 @@ class HtmlAdapter(Adapter):
             return ParseResult("broken", [], diagnostics)
         if len(postings) < minimum:
             return ParseResult("broken", postings, diagnostics)
+        return ParseResult("ok", postings, diagnostics)
+
+
+def _dig(payload, path: str):
+    if not path:
+        return payload
+    current = payload
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+class JsonAdapter(Adapter):
+    """Path-driven parsing shared by every http-json source."""
+
+    fetch_mode = "http-json"
+
+    @abstractmethod
+    def build_url(self, query: dict) -> str: ...
+
+    def post_process(self, posting: RawPosting, item: dict) -> RawPosting:
+        return posting
+
+    def fetch(self, query: dict, conditional: dict | None = None) -> RawFetch:
+        return self._get(self.build_url(query or {}), conditional)
+
+    def parse(self, raw: RawFetch, selectors: dict) -> ParseResult:
+        fields = selectors["fields"]
+        diagnostics: dict = {"item_matched": 0, "dropped": 0, "fill_rates": {}}
+
+        try:
+            payload = json.loads(raw.text())
+        except json.JSONDecodeError:
+            diagnostics["reason"] = "invalid json"
+            return ParseResult("broken", [], diagnostics)
+
+        items = _dig(payload, selectors.get("root", ""))
+        if not isinstance(items, list):
+            diagnostics["reason"] = "root is not a list"
+            return ParseResult("broken", [], diagnostics)
+
+        if selectors.get("skip_first") and items:
+            items = items[1:]
+        diagnostics["item_matched"] = len(items)
+
+        if not items:
+            return ParseResult("empty", [], diagnostics)
+
+        postings: list[RawPosting] = []
+        counts = {name: 0 for name in fields}
+
+        for item in items:
+            values = {}
+            for name, path in fields.items():
+                value = _dig(item, path) if isinstance(item, dict) else None
+                value = str(value).strip() if value not in (None, "") else None
+                values[name] = value
+                if value:
+                    counts[name] += 1
+
+            if any(values.get(name) is None for name in REQUIRED_FIELDS):
+                diagnostics["dropped"] += 1
+                continue
+
+            postings.append(self.post_process(RawPosting(
+                external_id=values["external_id"],
+                url=values["url"],
+                title=values["title"],
+                company=values["company"],
+                description=values.get("description") or "",
+                location=values.get("location"),
+                salary_raw=values.get("salary_raw"),
+                arrangement_hint=values.get("arrangement_hint"),
+                employment_hint=values.get("employment_hint"),
+            ), item))
+
+        diagnostics["fill_rates"] = {
+            name: round(count / len(items), 3) for name, count in counts.items()
+        }
+
+        if not postings:
+            return ParseResult("broken", [], diagnostics)
         return ParseResult("ok", postings, diagnostics)

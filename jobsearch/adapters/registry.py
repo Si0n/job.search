@@ -3,10 +3,12 @@ from __future__ import annotations
 from jobsearch.adapters.base import Adapter
 from jobsearch.adapters.djinni import DjinniAdapter
 from jobsearch.adapters.dou import DouAdapter
+from jobsearch.adapters.remoteok import RemoteOkAdapter
 
 ADAPTERS: dict[str, type[Adapter]] = {
     DjinniAdapter.name: DjinniAdapter,
     DouAdapter.name: DouAdapter,
+    RemoteOkAdapter.name: RemoteOkAdapter,
 }
 
 
