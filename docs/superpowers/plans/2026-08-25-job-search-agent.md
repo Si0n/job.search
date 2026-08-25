@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Collect job postings from five job sites, score them against the owner's profile, store them in MySQL, and push good matches to Telegram for phone triage.
+**Goal:** Collect job postings from five job sites, score them against the owner's profile, store them in MySQL, and present them in a localhost browser dashboard for detailed reading and triage.
 
-**Architecture:** A Python CLI owns every deterministic stage (fetch → parse → normalize → dedupe → store → filter → notify), each stage a separate re-runnable command emitting JSON. Claude does only the two things that need judgment — scoring postings and repairing broken parsers — invoked through a nightly `claude -p "/harvest"` cron entry. A small always-on Telegram bot writes triage decisions back.
+**Architecture:** A Python CLI owns every deterministic stage (fetch → parse → normalize → dedupe → store → filter), each stage a separate re-runnable command emitting JSON. Claude does only the two things that need judgment — scoring postings and repairing broken parsers — invoked as `/harvest` from the Claude Code CLI. A localhost-only dashboard served by stdlib `http.server` presents scored jobs and writes triage decisions straight back to MySQL.
 
-**Tech Stack:** Python 3.13, MySQL 8, `httpx`, `pymysql`, `beautifulsoup4` + `lxml`, `PyYAML`, `pytest`, stdlib `argparse`.
+**Tech Stack:** Python 3.13, MySQL 8, `httpx`, `pymysql`, `beautifulsoup4` + `lxml`, `PyYAML`, `pytest`, stdlib `argparse` and `http.server`. Front end is one hand-written HTML file with inline CSS and vanilla JS.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-job-search-design.md`
 
@@ -18,8 +18,8 @@
 - **Canonical entrypoint is the installed console script `jobsearch`.** `python -m jobsearch` is the non-installed fallback. Use `jobsearch` in all docs, skills, and cron entries.
 - **All CLI commands print JSON to stdout.** Diagnostics go to stderr. Claude consumes stdout without parsing prose.
 - **The app connects as MySQL user `job_search`, never `root`.** Credentials live only in `.env`, which is gitignored.
-- **No ORM, no Alembic, no async framework.** Numbered `.sql` files applied by `db.py`; `argparse` for the CLI; raw Bot API over `httpx` for Telegram.
-- **Tests are scoped to seven areas only** (normalize, salary, dedupe, filters, adapter parse, ParseResult classification, notification selection). No coverage target. No tests for CLI plumbing or DB round-trips.
+- **No ORM, no Alembic, no async framework, no web framework.** Numbered `.sql` files applied by `db.py`; `argparse` for the CLI; stdlib `http.server` for the dashboard; no JS framework, no build step, no CDN.
+- **Tests are scoped to eight areas only** (normalize, salary, dedupe, filters, adapter parse, ParseResult classification, dashboard view model, triage request parsing). No coverage target. No tests for CLI plumbing or DB round-trips.
 - **Currency conversion never happens in the database.** `salary_monthly_eur` is derived at write time from a static rate table and is comparison-only.
 - **Commit after every task.** Conventional commit prefixes (`feat:`, `test:`, `chore:`).
 
@@ -43,8 +43,9 @@
 | `jobsearch/harvest.py` | orchestrates a harvest run across sources |
 | `jobsearch/sweep.py` | activity/disappearance model |
 | `jobsearch/scoring.py` | queue selection and score persistence |
-| `jobsearch/notify.py` | unsent selection + insert-then-send protocol |
-| `jobsearch/bot.py` | long-poll loop, callback → `applications` |
+| `jobsearch/dashboard.py` | DB rows → view model (pure shaping, no I/O) |
+| `jobsearch/server.py` | localhost `http.server`: page, `/api/jobs`, `/api/status` |
+| `jobsearch/static/index.html` | the page — markup, CSS, vanilla JS, no build step |
 | `jobsearch/adapters/base.py` | `Adapter` ABC, `HtmlAdapter`, `JsonAdapter` |
 | `jobsearch/adapters/{djinni,dou,remoteok,weworkremotely}.py` | per-source fetch + field mapping |
 | `jobsearch/adapters/registry.py` | name → adapter instance |
@@ -414,6 +415,9 @@ CREATE TABLE scores (
   INDEX idx_scores_job_pass (job_id, `pass`, profile_hash)
 ) ENGINE=InnoDB;
 
+-- SUPERSEDED: dropped by migrations/002_drop_notifications.sql in Task 19 after the
+-- owner replaced Telegram delivery with the local dashboard. Kept here because Task 2
+-- is already executed history; do not re-add it.
 CREATE TABLE notifications (
   id                  INT AUTO_INCREMENT PRIMARY KEY,
   job_id              INT         NOT NULL,
@@ -3561,7 +3565,7 @@ git commit -m "feat: two-pass scoring queue keyed on profile hash"
 ````markdown
 ---
 name: harvest
-description: Nightly job harvest — collect from HTTP sources, sweep, filter, score in two passes, notify. Invoked by cron via `claude -p "/harvest"`.
+description: Job harvest — collect from HTTP sources, sweep, filter, score in two passes. Run from the Claude Code CLI, or headless via `claude -p "/harvest"`.
 user_invocable: true
 allowed-tools: [Bash, Read, Write]
 ---
@@ -3666,11 +3670,10 @@ jobsearch run-finish --id <run_id>
 Only if Step 1 reported anything in `totals.degraded`. Follow
 `.claude/skills/harvest/repair.md`.
 
-## Step 6 — Notify
+## Step 6 — Nothing to deliver
 
-```bash
-jobsearch notify --min-score 7
-```
+The dashboard reads live from MySQL, so a finished harvest is visible the moment the
+owner reloads `http://127.0.0.1:8765/`. If they want it running, `jobsearch serve`.
 
 ## Step 7 — Prune the raw cache
 
@@ -3684,14 +3687,14 @@ this runs.
 ## Step 8 — Summarize
 
 Print a short summary: counts harvested and new, how many scored at each pass, how many
-notified, any degraded source, any error. Three or four lines. This lands in the cron
+now sit above 7 in the dashboard, any degraded source, any error. Three or four lines. This lands in the cron
 log, so it should be readable at a glance six weeks later.
 ````
 
 - [ ] **Step 2: Verify the skill runs end to end**
 
 Run: `claude -p "/harvest"` from the repository root.
-Expected: each step's JSON appears, pass 2 scores a smaller set than pass 1, and the summary reports non-zero counts. Step 5 is skipped when nothing is degraded; Step 6 will report zero until Task 19 exists.
+Expected: each step's JSON appears, pass 2 scores a smaller set than pass 1, and the summary reports non-zero counts. Step 5 is skipped when nothing is degraded.
 
 - [ ] **Step 3: Commit**
 
@@ -3702,419 +3705,781 @@ git commit -m "feat: /harvest skill orchestrating the nightly pipeline"
 
 ---
 
-### Task 19: Telegram notification
+### Task 19: Drop the notifications table, shape the dashboard view model
 
 **Files:**
-- Create: `jobsearch/notify.py`
-- Modify: `jobsearch/cli.py`, `jobsearch/commands.py`
-- Test: `tests/test_notify.py`
+- Create: `migrations/002_drop_notifications.sql`, `jobsearch/dashboard.py`
+- Test: `tests/test_dashboard.py`
 
 **Interfaces:**
-- Consumes: `config.Settings`
+- Consumes: `db.connect`
 - Produces:
-  - `notify.needs_send(row: dict) -> bool`
-  - `notify.format_message(job: dict) -> str`
-  - `notify.send_all(conn, settings, min_score: int, sender=None) -> dict`
-  - `commands.notify(args) -> dict`
+  - `dashboard.fetch_rows(conn, *, min_score: int | None, include_triaged: bool) -> tuple[list[dict], list[dict]]` — `(job_rows, posting_rows)`, straight from SQL
+  - `dashboard.build_view(job_rows: list[dict], posting_rows: list[dict]) -> list[dict]` — **pure**, no database
+  - `dashboard.format_salary(row: dict) -> dict` — `{"text": str, "stated": bool, "monthly_eur": int | None}`
 
-Telegram is reached with plain `httpx` calls against the Bot API. Sending a message and answering a callback are two endpoints; a full bot framework would be a dependency with two users.
+The split is the point: `build_view` is pure and carries every decision worth testing; `fetch_rows` is SQL with no logic in it. `server.py` (Task 20) calls both and knows nothing about shaping.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write `migrations/002_drop_notifications.sql`**
 
-```python
-# tests/test_notify.py
-from jobsearch.notify import format_message, needs_send
-
-
-def test_a_job_with_no_notification_row_needs_sending():
-    assert needs_send({"notification_id": None, "sent_at": None}) is True
-
-
-def test_a_queued_but_unsent_row_needs_sending():
-    # The process died between INSERT and the API call. Retry it.
-    assert needs_send({"notification_id": 7, "sent_at": None}) is True
-
-
-def test_an_already_sent_row_is_never_resent():
-    assert needs_send({"notification_id": 7, "sent_at": "2026-08-25 09:00:00"}) is False
-
-
-def test_message_leads_with_score_title_and_company():
-    text = format_message({
-        "id": 1, "score": 8, "title": "Senior PHP Developer", "company": "Acme",
-        "location": "Remote (EU)", "arrangement": "remote",
-        "salary_min": 5000, "salary_max": 7000, "salary_currency": "EUR",
-        "salary_period": "month", "salary_source": "posting",
-        "verdict": "Fintech, Laravel + Vue. Strong stack overlap.",
-        "url": "https://djinni.co/jobs/101", "sources": "djinni,linkedin",
-    })
-    assert text.splitlines()[0] == "8/10 — Senior PHP Developer @ Acme"
-    assert "€5000–7000/month" in text
-    assert "Strong stack overlap" in text
-    assert "djinni.co/jobs/101" in text
-
-
-def test_message_says_salary_is_unstated_rather_than_omitting_it():
-    text = format_message({
-        "id": 2, "score": 7, "title": "Backend Engineer", "company": "Globex",
-        "location": "Kyiv", "arrangement": "hybrid",
-        "salary_min": None, "salary_max": None, "salary_currency": None,
-        "salary_period": None, "salary_source": "absent",
-        "verdict": "Good stack, comp unknown.", "url": "https://x.test/1",
-        "sources": "dou",
-    })
-    assert "salary not stated" in text
-
-
-def test_message_shows_a_single_figure_without_a_range_dash():
-    text = format_message({
-        "id": 3, "score": 9, "title": "Dev", "company": "Acme", "location": "Remote",
-        "arrangement": "remote", "salary_min": 6000, "salary_max": 6000,
-        "salary_currency": "EUR", "salary_period": "month", "salary_source": "posting",
-        "verdict": "x", "url": "https://x.test/2", "sources": "djinni",
-    })
-    assert "€6000/month" in text
-    assert "–" not in text.split("\n")[1]
+```sql
+DROP TABLE IF EXISTS notifications;
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+The table was created in Task 2 for Telegram delivery, which the owner removed in favour of a local dashboard. Nothing reads it. A dead table invites someone to wire it back up.
 
-Run: `.venv/bin/pytest tests/test_notify.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'jobsearch.notify'`
+- [ ] **Step 2: Write the failing tests**
 
-- [ ] **Step 3: Write `jobsearch/notify.py`**
+```python
+# tests/test_dashboard.py
+import json
+
+import pytest
+
+from jobsearch.dashboard import build_view, format_salary
+
+JOB = {
+    "id": 42, "title": "Senior PHP Developer", "company": "Acme",
+    "location": "Remote (EU)", "arrangement": "remote", "employment_type": "full-time",
+    "salary_min": 6000, "salary_max": 7000, "salary_currency": "EUR",
+    "salary_period": "month", "salary_source": "posting", "salary_monthly_eur": 6500,
+    "first_seen_at": "2026-08-25 09:00:00", "canonical_source_id": 1,
+    "score": 8, "red_flag_penalty": 0,
+    "dimensions": '{"technical_fit": 9, "seniority_fit": 7}',
+    "hard_concerns": "[]", "strengths": '["stack match"]', "weaknesses": '["vague comp"]',
+    "verdict": "Strong fit.", "status": None,
+}
+
+POSTINGS = [
+    {"job_id": 42, "source_id": 1, "source_name": "djinni",
+     "url": "https://djinni.co/jobs/101", "posted_at": "2026-08-24 12:00:00",
+     "description": "Laravel and Vue, fintech."},
+    {"job_id": 42, "source_id": 5, "source_name": "linkedin",
+     "url": "https://linkedin.com/jobs/view/9", "posted_at": None,
+     "description": "Short blurb."},
+]
+
+
+def test_one_card_per_job_with_every_source_listed():
+    view = build_view([JOB], POSTINGS)
+    assert len(view) == 1
+    card = view[0]
+    assert card["id"] == 42
+    assert [s["name"] for s in card["sources"]] == ["djinni", "linkedin"]
+    assert card["sources"][0]["url"] == "https://djinni.co/jobs/101"
+
+
+def test_description_comes_from_the_canonical_source():
+    # canonical_source_id is 1 (djinni), so its description wins over LinkedIn's blurb.
+    assert build_view([JOB], POSTINGS)[0]["description"] == "Laravel and Vue, fintech."
+
+
+def test_description_falls_back_to_the_longest_when_canonical_has_none():
+    postings = [
+        {**POSTINGS[0], "description": ""},
+        {**POSTINGS[1], "description": "A much longer description than the other one."},
+    ]
+    assert "much longer" in build_view([JOB], postings)[0]["description"]
+
+
+def test_json_columns_arrive_as_strings_and_are_parsed():
+    card = build_view([JOB], POSTINGS)[0]
+    assert card["dimensions"] == {"technical_fit": 9, "seniority_fit": 7}
+    assert card["strengths"] == ["stack match"]
+    assert card["hard_concerns"] == []
+
+
+def test_json_columns_already_parsed_by_the_driver_pass_through():
+    job = {**JOB, "dimensions": {"technical_fit": 9}, "strengths": ["x"], "hard_concerns": []}
+    card = build_view([job], POSTINGS)[0]
+    assert card["dimensions"] == {"technical_fit": 9}
+    assert card["strengths"] == ["x"]
+
+
+def test_an_unscored_job_renders_without_crashing():
+    job = {**JOB, "score": None, "dimensions": None, "hard_concerns": None,
+           "strengths": None, "weaknesses": None, "verdict": None}
+    card = build_view([job], POSTINGS)[0]
+    assert card["score"] is None
+    assert card["dimensions"] == {}
+    assert card["strengths"] == []
+    assert card["verdict"] == ""
+
+
+def test_untriaged_job_is_flagged_new_and_triaged_is_not():
+    assert build_view([JOB], POSTINGS)[0]["is_new"] is True
+    assert build_view([{**JOB, "status": "applied"}], POSTINGS)[0]["is_new"] is False
+
+
+def test_a_job_with_no_postings_is_dropped_rather_than_rendered_broken():
+    assert build_view([JOB], []) == []
+
+
+def test_cards_are_ordered_by_score_descending():
+    low = {**JOB, "id": 1, "score": 5}
+    high = {**JOB, "id": 2, "score": 9}
+    postings = [{**POSTINGS[0], "job_id": 1}, {**POSTINGS[0], "job_id": 2}]
+    assert [c["id"] for c in build_view([low, high], postings)] == [2, 1]
+
+
+@pytest.mark.parametrize("row,expected_text,stated", [
+    ({"salary_source": "posting", "salary_min": 6000, "salary_max": 7000,
+      "salary_currency": "EUR", "salary_period": "month"}, "€6000–7000/month", True),
+    ({"salary_source": "posting", "salary_min": 6000, "salary_max": 6000,
+      "salary_currency": "EUR", "salary_period": "month"}, "€6000/month", True),
+    ({"salary_source": "posting", "salary_min": None, "salary_max": 8000,
+      "salary_currency": "EUR", "salary_period": "month"}, "up to €8000/month", True),
+    ({"salary_source": "posting", "salary_min": 5000, "salary_max": None,
+      "salary_currency": "USD", "salary_period": "month"}, "from $5000/month", True),
+    ({"salary_source": "absent", "salary_min": None, "salary_max": None,
+      "salary_currency": None, "salary_period": None}, "not stated", False),
+])
+def test_salary_formatting(row, expected_text, stated):
+    result = format_salary(row)
+    assert result["text"] == expected_text
+    assert result["stated"] is stated
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `.venv/bin/pytest tests/test_dashboard.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'jobsearch.dashboard'`
+
+- [ ] **Step 4: Write `jobsearch/dashboard.py`**
 
 ```python
 from __future__ import annotations
 
-from datetime import datetime
+import json
 
-import httpx
-
-API = "https://api.telegram.org/bot{token}/{method}"
 SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£", "PLN": "zł", "UAH": "₴"}
-TIMEOUT = httpx.Timeout(15.0)
 
-_PENDING_SQL = """
-SELECT j.id, j.title, j.company, j.location, j.arrangement,
-       j.salary_min, j.salary_max, j.salary_currency, j.salary_period, j.salary_source,
-       sc.id AS score_id, sc.score, sc.verdict,
-       n.id AS notification_id, n.sent_at,
-       GROUP_CONCAT(DISTINCT s.name) AS sources,
-       (SELECT js2.url FROM job_sources js2 WHERE js2.job_id = j.id
-         ORDER BY (js2.source_id = j.canonical_source_id) DESC, js2.id LIMIT 1) AS url
+_JOBS_SQL = """
+SELECT j.id, j.title, j.company, j.location, j.arrangement, j.employment_type,
+       j.salary_min, j.salary_max, j.salary_currency, j.salary_period,
+       j.salary_source, j.salary_monthly_eur, j.first_seen_at, j.canonical_source_id,
+       sc.score, sc.red_flag_penalty, sc.dimensions, sc.hard_concerns,
+       sc.strengths, sc.weaknesses, sc.verdict,
+       a.status
 FROM jobs j
-JOIN scores sc      ON sc.id = j.latest_score_id
-JOIN job_sources js ON js.job_id = j.id
-JOIN sources s      ON s.id = js.source_id
-LEFT JOIN notifications n ON n.job_id = j.id AND n.channel = 'telegram'
-WHERE j.inactive_at IS NULL AND j.filtered_at IS NULL AND sc.score >= %s
-GROUP BY j.id
-ORDER BY sc.score DESC, j.first_seen_at DESC
+LEFT JOIN scores sc      ON sc.id = j.latest_score_id
+LEFT JOIN applications a ON a.job_id = j.id
+WHERE j.inactive_at IS NULL AND j.filtered_at IS NULL
+"""
+
+_POSTINGS_SQL = """
+SELECT js.job_id, js.source_id, s.name AS source_name, js.url, js.posted_at,
+       js.description
+FROM job_sources js
+JOIN sources s ON s.id = js.source_id
+WHERE js.inactive_at IS NULL
+ORDER BY js.job_id, s.priority
 """
 
 
-def needs_send(row: dict) -> bool:
-    """True when no notification exists, or one was queued but never confirmed sent."""
-    return row.get("sent_at") is None
-
-
-def _salary_line(job: dict) -> str:
-    if job.get("salary_source") != "posting" or not job.get("salary_currency"):
-        return "salary not stated"
-    symbol = SYMBOLS.get(job["salary_currency"], job["salary_currency"] + " ")
-    low, high, period = job.get("salary_min"), job.get("salary_max"), job.get("salary_period")
-    if low and high and low != high:
-        return f"{symbol}{low}–{high}/{period}"
-    figure = low or high
-    return f"{symbol}{figure}/{period}" if figure else "salary not stated"
-
-
-def format_message(job: dict) -> str:
-    place = job.get("location") or job.get("arrangement", "")
-    return "\n".join([
-        f"{job['score']}/10 — {job['title']} @ {job['company']}",
-        f"{place} · {_salary_line(job)} · {job.get('sources', '')}",
-        "",
-        job.get("verdict") or "",
-        "",
-        job["url"],
-    ])
-
-
-def _keyboard(job_id: int) -> dict:
-    return {"inline_keyboard": [[
-        {"text": "Interested", "callback_data": f"s:{job_id}:interested"},
-        {"text": "Skip",       "callback_data": f"s:{job_id}:skipped"},
-        {"text": "Applied",    "callback_data": f"s:{job_id}:applied"},
-    ]]}
-
-
-def _default_sender(settings, job: dict) -> int:
-    response = httpx.post(
-        API.format(token=settings.telegram_token, method="sendMessage"),
-        json={
-            "chat_id": settings.telegram_chat_id,
-            "text": format_message(job),
-            "reply_markup": _keyboard(job["id"]),
-            "disable_web_page_preview": False,
-        },
-        timeout=TIMEOUT,
-    )
-    response.raise_for_status()
-    return response.json()["result"]["message_id"]
-
-
-def send_all(conn, settings, min_score: int = 7, sender=None) -> dict:
-    """Insert the notification row BEFORE calling Telegram.
-
-    UNIQUE(job_id, channel) then makes a duplicate structurally impossible in
-    the common case. A crash after the API call but before the confirming UPDATE
-    leaves sent_at NULL, which the next run retries — at-least-once with a very
-    narrow window, rather than a silent duplicate on every crash.
-    """
-    send = sender or _default_sender
+def fetch_rows(conn, *, min_score: int | None = None,
+               include_triaged: bool = False) -> tuple[list[dict], list[dict]]:
+    sql, params = _JOBS_SQL, []
+    if min_score is not None:
+        sql += " AND sc.score >= %s"
+        params.append(min_score)
+    if not include_triaged:
+        sql += " AND a.job_id IS NULL"
 
     with conn.cursor() as cur:
-        cur.execute(_PENDING_SQL, (min_score,))
-        candidates = [row for row in cur.fetchall() if needs_send(row)]
+        cur.execute(sql, params)
+        jobs = list(cur.fetchall())
+        cur.execute(_POSTINGS_SQL)
+        postings = list(cur.fetchall())
+    return jobs, postings
 
-    sent, failed = 0, []
-    for job in candidates:
-        try:
-            with conn.cursor() as cur:
-                if job["notification_id"] is None:
-                    cur.execute(
-                        "INSERT INTO notifications (job_id, channel, chat_id, score_id, queued_at) "
-                        "VALUES (%s,'telegram',%s,%s,%s)",
-                        (job["id"], settings.telegram_chat_id, job["score_id"], datetime.now()),
-                    )
-                    notification_id = cur.lastrowid
-                else:
-                    notification_id = job["notification_id"]
-            conn.commit()
 
-            message_id = send(settings, job)
-
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE notifications SET telegram_message_id=%s, sent_at=%s WHERE id=%s",
-                    (message_id, datetime.now(), notification_id),
-                )
-            conn.commit()
-            sent += 1
-        except Exception as exc:
-            failed.append({"job_id": job["id"], "error": f"{type(exc).__name__}: {exc}"})
-
-    return {"command": "notify", "candidates": len(candidates), "sent": sent, "failed": failed}
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `.venv/bin/pytest tests/test_notify.py -v`
-Expected: 6 passed
-
-- [ ] **Step 5: Create the bot and wire the CLI**
-
-Create a bot with @BotFather, put the token in `.env` as `TELEGRAM_TOKEN`. Get the chat id by messaging the bot once, then:
-
-```bash
-curl -s "https://api.telegram.org/bot$(grep TELEGRAM_TOKEN .env | cut -d= -f2)/getUpdates" | python3 -m json.tool
-```
-Take `result[0].message.chat.id` into `.env` as `TELEGRAM_CHAT_ID`.
-
-Add the `notify` subparser (`--min-score`, default 7), the `main` branch, and:
-
-```python
-def notify(args) -> dict:
-    from jobsearch import notify as notify_mod
-
-    settings = load_settings(args.env)
-    conn = db.connect(settings)
+def _as_json(value, fallback):
+    """MySQL JSON columns arrive as str from some drivers and as parsed objects from
+    others. Accept both rather than depending on the driver's mood."""
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
     try:
-        return notify_mod.send_all(conn, settings, args.min_score)
-    finally:
-        conn.close()
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def format_salary(row: dict) -> dict:
+    monthly = row.get("salary_monthly_eur")
+    if row.get("salary_source") != "posting" or not row.get("salary_currency"):
+        return {"text": "not stated", "stated": False, "monthly_eur": monthly}
+
+    symbol = SYMBOLS.get(row["salary_currency"], row["salary_currency"] + " ")
+    low, high, period = row.get("salary_min"), row.get("salary_max"), row.get("salary_period")
+
+    if low and high and low != high:
+        text = f"{symbol}{low}–{high}/{period}"
+    elif low and high:
+        text = f"{symbol}{low}/{period}"
+    elif high:
+        text = f"up to {symbol}{high}/{period}"
+    elif low:
+        text = f"from {symbol}{low}/{period}"
+    else:
+        return {"text": "not stated", "stated": False, "monthly_eur": monthly}
+
+    return {"text": text, "stated": True, "monthly_eur": monthly}
+
+
+def _pick_description(job: dict, postings: list[dict]) -> str:
+    canonical = job.get("canonical_source_id")
+    preferred = [p for p in postings if p["source_id"] == canonical and p.get("description")]
+    if preferred:
+        return preferred[0]["description"]
+    with_text = [p for p in postings if p.get("description")]
+    if not with_text:
+        return ""
+    return max(with_text, key=lambda p: len(p["description"]))["description"]
+
+
+def build_view(job_rows: list[dict], posting_rows: list[dict]) -> list[dict]:
+    """Pure. Rows in, cards out — no database, no formatting decisions left to the page."""
+    by_job: dict[int, list[dict]] = {}
+    for posting in posting_rows:
+        by_job.setdefault(posting["job_id"], []).append(posting)
+
+    cards = []
+    for job in job_rows:
+        postings = by_job.get(job["id"], [])
+        if not postings:
+            # Every active job has at least one active posting. If it doesn't, the
+            # sweep and the harvest disagree — don't render a card with no link.
+            continue
+
+        cards.append({
+            "id": job["id"],
+            "title": job["title"],
+            "company": job["company"],
+            "location": job.get("location") or "",
+            "arrangement": job.get("arrangement") or "unknown",
+            "employment_type": job.get("employment_type") or "unknown",
+            "salary": format_salary(job),
+            "score": job.get("score"),
+            "red_flag_penalty": job.get("red_flag_penalty") or 0,
+            "dimensions": _as_json(job.get("dimensions"), {}),
+            "hard_concerns": _as_json(job.get("hard_concerns"), []),
+            "strengths": _as_json(job.get("strengths"), []),
+            "weaknesses": _as_json(job.get("weaknesses"), []),
+            "verdict": job.get("verdict") or "",
+            "status": job.get("status"),
+            "is_new": job.get("status") is None,
+            "first_seen_at": str(job.get("first_seen_at") or ""),
+            "description": _pick_description(job, postings),
+            "sources": [
+                {"name": p["source_name"], "url": p["url"],
+                 "posted_at": str(p["posted_at"]) if p.get("posted_at") else None}
+                for p in postings
+            ],
+        })
+
+    cards.sort(key=lambda c: (c["score"] is not None, c["score"] or 0), reverse=True)
+    return cards
 ```
 
-- [ ] **Step 6: Verify idempotency against the real database**
+- [ ] **Step 5: Run tests to verify they pass**
 
+Run: `.venv/bin/pytest tests/test_dashboard.py -v`
+Expected: 17 passed
+
+- [ ] **Step 6: Remove the dead Telegram configuration**
+
+Task 1 put `telegram_token` and `telegram_chat_id` on `Settings` for a delivery path that
+no longer exists. Dead config reads as a broken setup to whoever sees the empty values next.
+
+In `jobsearch/config.py`: delete both fields from the `Settings` dataclass and both `get(...)`
+lines from `load_settings`. In `.env.example`: delete the `TELEGRAM_TOKEN` and
+`TELEGRAM_CHAT_ID` lines. Then remove the same two lines from the real `.env` — it is
+gitignored, so do this with an editor or `sed -i`, and do not print the file.
+
+Verify nothing else referenced them:
 ```bash
-.venv/bin/jobsearch notify --min-score 7     # messages arrive
-.venv/bin/jobsearch notify --min-score 7     # sent: 0, candidates: 0
+grep -rn "telegram" jobsearch/ tests/ .env.example || echo "clean"
+.venv/bin/jobsearch --help
 ```
-Expected: the second run sends nothing. Then simulate the crash window:
+Expected: `clean`, and the CLI still loads.
+
+- [ ] **Step 7: Apply the migration**
+
+Run:
 ```bash
-mysql -ujob_search -p"$(grep DB_PASSWORD .env | cut -d= -f2)" job_search -e "
-UPDATE notifications SET sent_at=NULL WHERE id=(SELECT MAX(id) FROM (SELECT id FROM notifications) t);"
-.venv/bin/jobsearch notify --min-score 7
+.venv/bin/jobsearch init-db
+mysql -ujob_search -p"$(grep DB_PASSWORD .env | cut -d= -f2)" job_search -e "SHOW TABLES;"
 ```
-Expected: exactly one message re-sent — the retry path works and does not fan out.
+Expected: `{"applied": ["002_drop_notifications.sql"], "count": 1}` and eight tables — `notifications` gone.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add jobsearch/notify.py jobsearch/cli.py jobsearch/commands.py tests/test_notify.py
-git commit -m "feat: idempotent Telegram notification with insert-before-send"
+git add migrations/002_drop_notifications.sql jobsearch/dashboard.py \
+        tests/test_dashboard.py jobsearch/config.py .env.example
+git commit -m "feat: dashboard view model, drop notifications table and Telegram config"
 ```
 
 ---
 
-### Task 20: The Telegram bot process
+### Task 20: The local dashboard server and page
 
 **Files:**
-- Create: `jobsearch/bot.py`, `deploy/jobsearch-bot.service`
+- Create: `jobsearch/server.py`, `jobsearch/static/index.html`
 - Modify: `jobsearch/cli.py`, `jobsearch/commands.py`
-- Test: none — a long-poll loop against a live API
+- Test: `tests/test_server.py`
 
 **Interfaces:**
-- Consumes: `config.Settings`, `db.connect`
+- Consumes: `dashboard.fetch_rows`, `dashboard.build_view`, `store.set_status`, `db.connect`
 - Produces:
-  - `bot.handle_callback(conn, data: str, message_id: int) -> str` — returns the toast text
-  - `bot.run(settings) -> None`
-  - `commands.bot(args) -> dict`
+  - `server.VALID_STATUSES: set[str]`
+  - `server.parse_status_request(body: bytes) -> tuple[int, str, str | None]` — **pure**, raises `ValueError`
+  - `server.run(settings, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None`
+  - `commands.serve(args) -> dict`
 
-- [ ] **Step 1: Write `jobsearch/bot.py`**
+- [ ] **Step 1: Write the failing tests**
+
+Only the request parsing is tested. The socket layer has no decisions in it worth testing, and the shaping is already covered by Task 19.
+
+```python
+# tests/test_server.py
+import json
+
+import pytest
+
+from jobsearch.server import VALID_STATUSES, parse_status_request
+
+
+def body(**payload) -> bytes:
+    return json.dumps(payload).encode()
+
+
+def test_a_valid_request_parses():
+    assert parse_status_request(body(id=42, status="applied")) == (42, "applied", None)
+
+
+def test_a_note_passes_through():
+    assert parse_status_request(body(id=42, status="interested", note="ping them")) == (
+        42, "interested", "ping them")
+
+
+def test_every_valid_status_is_accepted():
+    for status in VALID_STATUSES:
+        assert parse_status_request(body(id=1, status=status))[1] == status
+
+
+@pytest.mark.parametrize("payload", [
+    {"id": 42, "status": "definitely-not-a-status"},
+    {"id": 42, "status": "applied; DROP TABLE jobs"},
+    {"id": 42, "status": ""},
+])
+def test_an_unknown_status_is_rejected(payload):
+    with pytest.raises(ValueError, match="status"):
+        parse_status_request(body(**payload))
+
+
+@pytest.mark.parametrize("payload", [
+    {"id": "not-a-number", "status": "applied"},
+    {"id": None, "status": "applied"},
+    {"status": "applied"},
+])
+def test_a_bad_job_id_is_rejected(payload):
+    with pytest.raises(ValueError, match="id"):
+        parse_status_request(body(**payload))
+
+
+def test_a_numeric_string_id_is_accepted():
+    # JSON from a browser form may carry the id as a string. That is not an error.
+    assert parse_status_request(body(id="42", status="skipped")) == (42, "skipped", None)
+
+
+def test_malformed_json_is_rejected():
+    with pytest.raises(ValueError):
+        parse_status_request(b"{not json")
+
+
+def test_an_oversized_note_is_rejected_rather_than_truncated_silently():
+    with pytest.raises(ValueError, match="note"):
+        parse_status_request(body(id=1, status="applied", note="x" * 5000))
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `.venv/bin/pytest tests/test_server.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'jobsearch.server'`
+
+- [ ] **Step 3: Write `jobsearch/server.py`**
 
 ```python
 from __future__ import annotations
 
-import time
-from datetime import datetime
+import json
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
-import httpx
+from jobsearch import dashboard, db, store
 
-from jobsearch import db
-from jobsearch.notify import API, TIMEOUT
-
-POLL_SECONDS = 50
 VALID_STATUSES = {"interested", "skipped", "applied", "replied",
                   "rejected", "interviewing", "offer"}
+MAX_NOTE = 2000
+STATIC = Path(__file__).parent / "static"
 
 
-def handle_callback(conn, data: str, message_id: int) -> str:
-    """callback_data is 's:<job_id>:<status>'.
+def parse_status_request(body: bytes) -> tuple[int, str, str | None]:
+    """Pure. Validate a triage request before it reaches the database.
 
-    The job id travels in the payload because it is small and stable, but the
-    message id is recorded too — that is what lets a later feature edit the
-    original message in place.
+    Every field is checked against a whitelist or a type, because this is the only
+    endpoint that writes, and a browser is not a trusted caller even on loopback.
     """
     try:
-        marker, raw_job_id, status = data.split(":", 2)
-    except ValueError:
-        return "Unrecognized action"
+        payload = json.loads(body)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"malformed JSON: {exc}") from None
+    if not isinstance(payload, dict):
+        raise ValueError("malformed JSON: expected an object")
 
-    if marker != "s" or status not in VALID_STATUSES:
-        return "Unrecognized action"
+    raw_id = payload.get("id")
+    try:
+        job_id = int(raw_id)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid job id: {raw_id!r}") from None
 
-    job_id = int(raw_job_id)
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO applications (job_id, status, updated_at) VALUES (%s,%s,%s) "
-            "ON DUPLICATE KEY UPDATE status=VALUES(status), updated_at=VALUES(updated_at)",
-            (job_id, status, datetime.now()),
-        )
-        cur.execute(
-            "UPDATE notifications SET telegram_message_id=%s WHERE job_id=%s AND channel='telegram'",
-            (message_id, job_id),
-        )
-    conn.commit()
-    return f"Marked {status}"
+    status = payload.get("status")
+    if status not in VALID_STATUSES:
+        raise ValueError(f"invalid status: {status!r}")
+
+    note = payload.get("note")
+    if note is not None:
+        if not isinstance(note, str):
+            raise ValueError("invalid note: expected a string")
+        if len(note) > MAX_NOTE:
+            raise ValueError(f"note too long: {len(note)} > {MAX_NOTE}")
+
+    return job_id, status, note
 
 
-def run(settings) -> None:
-    offset = None
-    while True:
-        try:
-            response = httpx.get(
-                API.format(token=settings.telegram_token, method="getUpdates"),
-                params={"timeout": POLL_SECONDS, "offset": offset,
-                        "allowed_updates": '["callback_query"]'},
-                timeout=httpx.Timeout(POLL_SECONDS + 15),
-            )
-            response.raise_for_status()
-            updates = response.json().get("result", [])
-        except httpx.HTTPError:
-            time.sleep(5)
-            continue
+def _make_handler(settings):
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, code: int, payload: dict | list, content_type="application/json"):
+            data = json.dumps(payload, default=str).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
-        for update in updates:
-            offset = update["update_id"] + 1
-            query = update.get("callback_query")
-            if not query:
-                continue
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            if parsed.path in ("/", "/index.html"):
+                page = (STATIC / "index.html").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(page)))
+                self.end_headers()
+                self.wfile.write(page)
+                return
+
+            if parsed.path == "/api/jobs":
+                params = parse_qs(parsed.query)
+                min_score = params.get("min_score", [None])[0]
+                include_triaged = params.get("all", ["0"])[0] == "1"
+                conn = db.connect(settings)
+                try:
+                    jobs, postings = dashboard.fetch_rows(
+                        conn,
+                        min_score=int(min_score) if min_score else None,
+                        include_triaged=include_triaged,
+                    )
+                finally:
+                    conn.close()
+                self._send(200, dashboard.build_view(jobs, postings))
+                return
+
+            self._send(404, {"error": "not found"})
+
+        def do_POST(self):
+            if urlparse(self.path).path != "/api/status":
+                self._send(404, {"error": "not found"})
+                return
+
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > 64 * 1024:
+                self._send(413, {"error": "body too large"})
+                return
+
+            try:
+                job_id, status, note = parse_status_request(self.rfile.read(length))
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
 
             conn = db.connect(settings)
             try:
-                text = handle_callback(
-                    conn, query.get("data", ""), query["message"]["message_id"]
-                )
+                result = store.set_status(conn, job_id, status, note)
             finally:
                 conn.close()
+            self._send(200, result)
 
-            httpx.post(
-                API.format(token=settings.telegram_token, method="answerCallbackQuery"),
-                json={"callback_query_id": query["id"], "text": text},
-                timeout=TIMEOUT,
-            )
+        def log_message(self, fmt, *args):
+            # Default logging writes to stderr on every request, including the
+            # polling the page does. Keep the terminal usable.
+            pass
+
+    return Handler
+
+
+def run(settings, host: str = "127.0.0.1", port: int = 8765,
+        open_browser: bool = False) -> None:
+    httpd = ThreadingHTTPServer((host, port), _make_handler(settings))
+    url = f"http://{host}:{port}/"
+    print(f"jobsearch dashboard on {url}  (ctrl-c to stop)")
+    if open_browser:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
 ```
 
-A fresh connection per callback rather than one held open for weeks — MySQL closes idle connections, and reconnect logic would be more code than this costs.
+`host` defaults to `127.0.0.1` and the CLI does not expose a flag to change it. The page has no authentication, and unreachability from off the host is the entire security model — making the bind address a flag would let a careless `--host 0.0.0.0` publish the owner's job search to the network.
 
-- [ ] **Step 2: Wire the CLI**
+- [ ] **Step 4: Write `jobsearch/static/index.html`**
 
-`sub.add_parser("bot", help="run the Telegram bot (long-running)")`, a `main` branch, and:
+One self-contained file: no build step, no CDN, no framework. It fetches `/api/jobs` and renders cards.
+
+```html
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jobsearch</title>
+<style>
+:root {
+  --bg:#f6f7f9; --card:#fff; --ink:#12151a; --muted:#6b7280; --line:#e4e7ec;
+  --accent:#2563eb; --good:#15803d; --warn:#b45309; --bad:#b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0f1115; --card:#171a21; --ink:#e6e8ec; --muted:#9aa3b2; --line:#262b36;
+    --accent:#60a5fa; --good:#4ade80; --warn:#fbbf24; --bad:#f87171;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);
+  border-bottom:1px solid var(--line);padding:14px 20px}
+h1{margin:0 0 10px;font-size:17px;letter-spacing:-.01em}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.controls input,.controls select{background:var(--card);color:var(--ink);
+  border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit}
+.controls input[type=search]{min-width:230px;flex:1}
+#count{color:var(--muted);font-size:13px;margin-left:auto}
+main{padding:18px 20px;max-width:1000px;margin:0 auto;
+  display:flex;flex-direction:column;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px}
+.card.new{border-left:3px solid var(--accent)}
+.top{display:flex;gap:12px;align-items:flex-start}
+.score{flex:0 0 46px;height:46px;border-radius:9px;display:grid;place-items:center;
+  font-weight:700;font-size:17px;background:var(--line)}
+.s-hi{background:color-mix(in srgb,var(--good) 22%,transparent);color:var(--good)}
+.s-mid{background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn)}
+.s-lo{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+.title{font-weight:650;font-size:15.5px}
+.meta{color:var(--muted);font-size:13px;margin-top:2px}
+.verdict{margin:10px 0 0}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);
+  color:var(--muted)}
+.tag.concern{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+.dims{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
+.dim{font-size:11.5px;color:var(--muted);border:1px solid var(--line);
+  border-radius:5px;padding:1px 6px}
+.actions{display:flex;gap:7px;margin-top:12px;flex-wrap:wrap}
+button{font:inherit;font-size:13px;padding:5px 12px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--ink)}
+button:hover{border-color:var(--accent);color:var(--accent)}
+a{color:var(--accent)}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--muted);font-size:13px}
+pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
+  max-height:340px;overflow:auto}
+.empty{color:var(--muted);text-align:center;padding:50px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>jobsearch</h1>
+  <div class="controls">
+    <input type="search" id="q" placeholder="search title, company, description">
+    <select id="minScore">
+      <option value="7">score ≥ 7</option>
+      <option value="8">score ≥ 8</option>
+      <option value="6">score ≥ 6</option>
+      <option value="">any score</option>
+    </select>
+    <select id="src"><option value="">all sources</option></select>
+    <select id="arr">
+      <option value="">any arrangement</option>
+      <option value="remote">remote</option>
+      <option value="hybrid">hybrid</option>
+      <option value="unknown">unspecified</option>
+    </select>
+    <label><input type="checkbox" id="all"> include triaged</label>
+    <span id="count"></span>
+  </div>
+</header>
+<main id="list"></main>
+<script>
+let JOBS = [];
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function load() {
+  const p = new URLSearchParams();
+  if ($("#minScore").value) p.set("min_score", $("#minScore").value);
+  if ($("#all").checked) p.set("all", "1");
+  JOBS = await (await fetch("/api/jobs?" + p)).json();
+
+  const sources = [...new Set(JOBS.flatMap(j => j.sources.map(s => s.name)))].sort();
+  const keep = $("#src").value;
+  $("#src").innerHTML = '<option value="">all sources</option>' +
+    sources.map(s => `<option ${s === keep ? "selected" : ""}>${esc(s)}</option>`).join("");
+  render();
+}
+
+function render() {
+  const q = $("#q").value.toLowerCase().trim();
+  const src = $("#src").value, arr = $("#arr").value;
+  const shown = JOBS.filter(j =>
+    (!src || j.sources.some(s => s.name === src)) &&
+    (!arr || j.arrangement === arr) &&
+    (!q || (j.title + " " + j.company + " " + j.description).toLowerCase().includes(q)));
+
+  $("#count").textContent = `${shown.length} of ${JOBS.length}`;
+  $("#list").innerHTML = shown.length ? shown.map(card).join("")
+    : '<div class="empty">Nothing here. Run <code>/harvest</code>, then reload.</div>';
+}
+
+function card(j) {
+  const cls = j.score >= 8 ? "s-hi" : j.score >= 6 ? "s-mid" : "s-lo";
+  const dims = Object.entries(j.dimensions || {})
+    .map(([k, v]) => `<span class="dim">${esc(k.replace(/_/g, " "))} ${v}</span>`).join("");
+  const concerns = (j.hard_concerns || [])
+    .map(c => `<span class="tag concern">${esc(c)}</span>`).join("");
+  const links = j.sources
+    .map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>`)
+    .join(" · ");
+  return `<article class="card ${j.is_new ? "new" : ""}">
+    <div class="top">
+      <div class="score ${cls}">${j.score ?? "–"}</div>
+      <div style="flex:1">
+        <div class="title">${esc(j.title)} — ${esc(j.company)}</div>
+        <div class="meta">${esc(j.location || j.arrangement)} · ${esc(j.salary.text)}
+          · ${esc(j.employment_type)} · ${links}
+          ${j.status ? ` · <b>${esc(j.status)}</b>` : ""}</div>
+      </div>
+    </div>
+    ${j.verdict ? `<p class="verdict">${esc(j.verdict)}</p>` : ""}
+    ${concerns ? `<div class="tags">${concerns}</div>` : ""}
+    ${dims ? `<div class="dims">${dims}</div>` : ""}
+    ${(j.strengths || []).length || (j.weaknesses || []).length ? `<div class="tags">
+      ${(j.strengths || []).map(s => `<span class="tag">+ ${esc(s)}</span>`).join("")}
+      ${(j.weaknesses || []).map(w => `<span class="tag">− ${esc(w)}</span>`).join("")}
+    </div>` : ""}
+    <details><summary>description</summary><pre class="desc">${esc(j.description)}</pre></details>
+    <div class="actions">
+      <button onclick="mark(${j.id},'interested')">Interested</button>
+      <button onclick="mark(${j.id},'applied')">Applied</button>
+      <button onclick="mark(${j.id},'skipped')">Skip</button>
+    </div>
+  </article>`;
+}
+
+async function mark(id, status) {
+  const res = await fetch("/api/status", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id, status}),
+  });
+  if (!res.ok) { alert("Failed: " + (await res.json()).error); return; }
+  if ($("#all").checked) { JOBS.find(j => j.id === id).status = status; render(); }
+  else { JOBS = JOBS.filter(j => j.id !== id); render(); }
+}
+
+["#q", "#src", "#arr"].forEach(s => $(s).addEventListener("input", render));
+["#minScore", "#all"].forEach(s => $(s).addEventListener("change", load));
+load();
+</script>
+</body>
+</html>
+```
+
+Every string from the database goes through `esc` before reaching the DOM. Job descriptions are scraped from third-party sites and must never be treated as trusted markup.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `.venv/bin/pytest tests/test_server.py -v`
+Expected: 14 passed
+
+- [ ] **Step 6: Wire the CLI and package the static asset**
+
+In `build_parser`:
 
 ```python
-def bot(args) -> dict:
-    from jobsearch import bot as bot_mod
-
-    bot_mod.run(load_settings(args.env))
-    return {"command": "bot", "status": "stopped"}
+    serve_parser = sub.add_parser("serve", help="run the local dashboard")
+    serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--open", action="store_true", dest="open_browser")
 ```
 
-- [ ] **Step 3: Verify by hand**
+In `commands.py`:
 
-Run `.venv/bin/jobsearch bot` in one terminal, then tap a button on a notification in Telegram. Expected: the toast reads `Marked interested`, and:
-```bash
-mysql -ujob_search -p"$(grep DB_PASSWORD .env | cut -d= -f2)" job_search -e "SELECT * FROM applications;"
-```
-shows the row. Tap a different button on the same message — expected: the status updates rather than erroring on the primary key.
+```python
+def serve(args) -> dict:
+    from jobsearch import server
 
-- [ ] **Step 4: Write `deploy/jobsearch-bot.service`**
-
-```ini
-[Unit]
-Description=Job search Telegram bot
-After=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=%h/www/job.search
-ExecStart=%h/www/job.search/.venv/bin/jobsearch bot
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=default.target
+    server.run(load_settings(args.env), port=args.port,
+               open_browser=getattr(args, "open_browser", False))
+    return {"command": "serve", "status": "stopped"}
 ```
 
-Install and enable it:
-```bash
-mkdir -p ~/.config/systemd/user
-cp deploy/jobsearch-bot.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now jobsearch-bot
-systemctl --user status jobsearch-bot --no-pager
-loginctl enable-linger "$USER"     # keeps it running when not logged in
-```
-Expected: `active (running)`.
+Add the `main` branch following the existing pattern. Then make sure the HTML ships with the package — in `pyproject.toml`:
 
-- [ ] **Step 5: Commit**
+```toml
+[tool.setuptools.package-data]
+jobsearch = ["static/*.html"]
+```
+
+- [ ] **Step 7: Verify end to end**
 
 ```bash
-git add jobsearch/bot.py deploy/ jobsearch/cli.py jobsearch/commands.py
-git commit -m "feat: Telegram bot with inline-button triage and systemd unit"
+.venv/bin/jobsearch serve --port 8765 &
+sleep 1
+curl -s "http://127.0.0.1:8765/api/jobs?min_score=0&all=1" | head -c 400
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8765/
+curl -s -X POST http://127.0.0.1:8765/api/status \
+  -H 'Content-Type: application/json' -d '{"id":1,"status":"bogus"}'
+kill %1
+```
+Expected: the JSON endpoint returns an array; `/` returns 200; the bogus status returns a 400 with an `error` field rather than writing anything.
+
+Then open `http://127.0.0.1:8765/` in a browser and confirm the cards render, the filters work, and a triage button removes a card and writes to `applications`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add jobsearch/server.py jobsearch/static/ jobsearch/cli.py jobsearch/commands.py \
+        tests/test_server.py pyproject.toml
+git commit -m "feat: localhost dashboard with in-page triage"
 ```
 
 ---
@@ -4462,15 +4827,14 @@ Each element needs `external_id`, `url`, `title`, `company`; `location`,
 
 Report `accepted`, `new`, and anything in `rejected`.
 
-## Step 5 — Filter, score, notify
+## Step 5 — Filter and score
 
 ```bash
 jobsearch filter
 ```
 
-Then run Steps 3, 4, and 6 of `.claude/skills/harvest/SKILL.md` — the scoring and
-notification path is identical. Nothing downstream knows or cares that these postings
-came from a browser.
+Then run Steps 3 and 4 of `.claude/skills/harvest/SKILL.md` — the scoring path is
+identical. Nothing downstream knows or cares that these postings came from a browser.
 
 ## Step 6 — Close the tab
 ````
@@ -4478,7 +4842,7 @@ came from a browser.
 - [ ] **Step 5: Verify end to end**
 
 Run `/harvest-linkedin` with Chrome open and logged into LinkedIn.
-Expected: postings ingest, get filtered and scored, and the good ones arrive in Telegram.
+Expected: postings ingest, get filtered and scored, and appear in the dashboard alongside HTTP-sourced jobs, each card listing `linkedin` among its sources.
 
 - [ ] **Step 6: Commit**
 
@@ -4667,18 +5031,17 @@ Expected, in order: harvest reports `status: "broken"`; `sources --degraded` lis
 `repair-context` returns the cached path and a baseline. Then restore the correct
 selector.
 
-- [ ] **Step 5: Install the cron entry**
+- [ ] **Step 5: Optional — install the cron entry**
 
-```bash
-crontab -e
-```
+The owner runs `/harvest` from the Claude Code CLI a few times a day, so cron is a
+convenience, not a requirement. Offer it; do not install it without being asked.
 
-Add:
 ```
 0 9 * * * cd $HOME/www/job.search && /usr/bin/claude -p "/harvest" >> var/harvest.log 2>&1
 ```
 
-Verify the invocation works outside an interactive session:
+Either way, verify the headless invocation works, since that is what a cron entry would
+depend on:
 ```bash
 cd ~/www/job.search && claude -p "/harvest" | tail -20
 ```
@@ -4689,9 +5052,10 @@ cd ~/www/job.search && claude -p "/harvest" | tail -20
 .venv/bin/pytest tests/ -v
 .venv/bin/jobsearch harvest && .venv/bin/jobsearch sweep && .venv/bin/jobsearch filter
 .venv/bin/jobsearch sources
-systemctl --user status jobsearch-bot --no-pager
+.venv/bin/jobsearch serve --port 8765 &
+sleep 1 && curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8765/ && kill %1
 ```
-Expected: all tests pass, every source `ok` or `empty`, bot `active (running)`.
+Expected: all tests pass, every source `ok` or `empty`, dashboard returns 200.
 
 - [ ] **Step 7: Commit**
 

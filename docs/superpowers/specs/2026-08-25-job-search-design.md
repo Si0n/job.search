@@ -1,14 +1,15 @@
 # Job Search Agent — Design
 
 **Date:** 2026-08-25
-**Status:** Revised after review — approved for planning
-**Revision:** 2
+**Status:** Revised after review, then revised again when the owner replaced
+Telegram delivery with a local browser dashboard — approved for planning
+**Revision:** 3
 
 ## Purpose
 
 Collect job postings from several job sites, score them against the owner's skills and
-preferences, store them in MySQL, and push good matches to Telegram where they can be
-triaged from a phone.
+preferences, store them in MySQL, and surface them in a local browser dashboard where
+they can be read in detail and triaged.
 
 The owner is the job seeker. This is the candidate-side mirror of the recruiter-side
 `rp-*` skill pack already installed globally.
@@ -18,7 +19,7 @@ The owner is the job seeker. This is the candidate-side mirror of the recruiter-
 **Python never judges. Claude never parses HTML on the happy path.**
 
 - **Python** does everything deterministic: fetch, parse, normalize, dedupe, store,
-  filter, notify. Free, fast, repeatable.
+  filter, and serving the dashboard. Free, fast, repeatable.
 - **Claude** does only what needs judgment: scoring a posting against the profile, and
   repairing a parser when a site changes its markup.
 - Claude touching markup is an exception that signals something broke.
@@ -51,10 +52,10 @@ is sitting in a column.
                        │        │
                        └───┬────┘
                     ┌──────▼────────┐
-                    │ notifications │
+                    │   dashboard   │  localhost, reads live
                     └──────┬────────┘
                     ┌──────▼────────┐
-                    │ applications  │
+                    │ applications  │  triage decisions
                     └───────────────┘
 ```
 
@@ -70,13 +71,16 @@ Hybrid, because the sources differ in difficulty:
   No Anthropic API key, no per-token billing.
 - **Manual, browser-driven** — LinkedIn. Auth-walled, so it runs as `/harvest-linkedin`
   against the owner's live Chrome via Chrome MCP, invoked when convenient.
-- **Always on** — the Telegram bot process, handling inline-button callbacks.
+- **On demand** — `jobsearch serve`, a localhost-only dashboard the owner opens in a
+  browser. It reads live from MySQL and writes triage decisions straight back, so it is
+  never stale and never needs regenerating.
 
-Default cadence: daily at 09:00 local, configurable in the cron entry.
+Default cadence: the owner runs `/harvest` from the Claude Code CLI a few times a day.
+A cron entry is optional and documented, not required.
 
 **Claude is orchestration, not infrastructure.** Every pipeline stage is a CLI command
 runnable by hand or by any scheduler. If the Claude invocation mechanism changes, the
-application survives unchanged — harvest, filter, and notify still work; only scoring
+application survives unchanged — harvest, filter, and the dashboard still work; only scoring
 stops happening, and unscored jobs simply queue up until it resumes.
 
 ## Sources in scope
@@ -121,8 +125,9 @@ job.search/
 │   ├── dedupe.py              # fingerprint + merge rules
 │   ├── store.py               # upsert, queries
 │   ├── filters.py             # hard rules from profile.yaml
-│   ├── notify.py              # Telegram send
-│   └── bot.py                 # long-running bot, button callbacks
+│   ├── dashboard.py           # DB rows → the view model the page renders
+│   ├── server.py              # localhost http.server: serves the page, accepts triage
+│   └── static/index.html      # the page itself: markup, CSS, client-side JS
 ├── migrations/                # 001_init.sql, …
 ├── tests/                     # pytest, fixture-driven
 │   └── fixtures/<source>/{valid,empty,changed-markup}.html.gz
@@ -287,29 +292,6 @@ normalized profile at load time. `profile_version` is a convenience label. Compa
 score history across a profile edit keys on the hash, so a forgotten version bump cannot
 silently make historical data misleading.
 
-### `notifications`
-
-| column | type | notes |
-|---|---|---|
-| `id` | INT PK | |
-| `job_id` | FK | UNIQUE together with `channel` |
-| `channel` | VARCHAR | `telegram` |
-| `chat_id` | VARCHAR | |
-| `telegram_message_id` | BIGINT NULL | |
-| `score_id` | FK | which verdict was sent |
-| `queued_at` | DATETIME | |
-| `sent_at` | DATETIME NULL | |
-
-`UNIQUE(job_id, channel)` makes notification idempotent. Protocol: insert the row with
-`sent_at NULL` **before** calling Telegram, then update with `telegram_message_id` and
-`sent_at` on success. A crash after send but before update leaves a `sent_at IS NULL`
-row that the next run retries — at-least-once with a narrow duplicate window, rather
-than the current design's silent duplicate on every crash.
-
-Holding `chat_id` and `telegram_message_id` here also means a button callback resolves
-to a job by message lookup instead of fragile encoded callback data, and leaves the door
-open to editing a sent message when its status changes.
-
 ### `applications`
 
 | column | type | notes |
@@ -319,7 +301,8 @@ open to editing a sent message when its status changes.
 | `note` | TEXT NULL | |
 | `updated_at` | DATETIME | |
 
-Business state only. Telegram transport details live in `notifications`, never here.
+Business state only — and the inbox marker: a job with no row here has not been
+triaged. The dashboard's default view is exactly `applications.job_id IS NULL`.
 
 ### `schema_migrations`
 
@@ -489,7 +472,9 @@ mostly-junk:
 dies between passes resumes correctly, and a profile edit naturally re-queues everything
 without a manual reset.
 
-Notification threshold: score ≥ 7.
+Dashboard default filter: score ≥ 7. It is a view setting, not a gate — every scored
+job stays queryable, and the threshold is a control on the page rather than a number
+baked into a delivery step.
 
 ## Flows
 
@@ -504,8 +489,8 @@ Notification threshold: score ≥ 7.
 5. **Repair** — for any `degraded` source, Claude reads that source's cached bytes,
    extracts the postings so nothing is lost that day, ingests them, and writes a proposal
    to `reports/repair-<date>.md`. Selector changes are **never** auto-applied.
-6. `jobsearch notify --min-score 7` — sends matches with no `notifications` row, plus any
-   row still `sent_at IS NULL`.
+6. Nothing to deliver. The dashboard reads live, so a completed harvest is visible the
+   moment the owner reloads the page.
 
 ### LinkedIn (`/harvest-linkedin`, manual)
 
@@ -516,15 +501,19 @@ postings are indistinguishable downstream.
 
 ### Triage
 
-```
-🎯 8/10 — Senior PHP Developer @ Acme
-📍 Remote (EU) · 💰 €5–7k/mo
-Fintech, Laravel + Vue. Strong stack overlap, comp above floor.
-[Interested] [Skip] [Applied]
-```
+`jobsearch serve` binds `127.0.0.1:8765` and opens on the inbox: scored, unfiltered,
+active jobs with no `applications` row, ranked by score.
 
-Callback resolves the job via `notifications.telegram_message_id`, then writes to
-`applications`. `/review` gives the same triage in the terminal for longer sessions.
+Each card carries the score and its dimension breakdown, the verdict, any hard concerns,
+salary as posted, the arrangement, every source the posting was found on with a link to
+each, and the full description behind a disclosure. Three buttons — Interested, Skip,
+Applied — POST the decision, write `applications`, and drop the card from the inbox.
+
+Filters on the page: minimum score, source, arrangement, and a free-text search across
+title, company, and description. All client-side over the JSON the page already loaded.
+
+`/review` gives the same triage in the terminal when the owner would rather stay in the
+CLI.
 
 ## Adapter interface
 
@@ -588,13 +577,16 @@ has not earned; the fill rates and the count delta are the actual evidence.
   for the test suite are copied out of it.
 - **Idempotency** — every stage is re-runnable and derives its work from data rather than
   from a lifecycle flag. A crashed run resumes on the next tick with no cleanup.
-- **Telegram down** — jobs keep their unsent `notifications` row and go out next run.
+- **Dashboard down** — nothing is lost; it holds no state of its own. Restart it.
 - **Politeness** — per-source delay, honest User-Agent, conditional requests via
   `etag`/`last_modified`, sequential rather than parallel.
 
 ## Security
 
-- `.env` is gitignored and holds the MySQL credentials and the bot token.
+- `.env` is gitignored and holds the MySQL credentials. There are no other secrets.
+- The dashboard binds `127.0.0.1` only — never `0.0.0.0`. It has no authentication
+  because it is not reachable off the host, and that is the whole of its security model.
+  Any change to the bind address needs authentication first.
 - The app connects as a dedicated `job_search` MySQL user, never `root`, keeping it off
   the account that reaches unrelated databases on this host.
 - No credentials in the repo, in `profile.yaml`, or in skill files.
@@ -615,7 +607,8 @@ cannot be verified by inspection.
 | `filters` | hard rules, and that absent data passes rather than fails |
 | adapters | `parse` against saved fixtures per source: `valid`, `empty`, `changed-markup` |
 | `ParseResult` | that `changed-markup` classifies `broken` and `empty` classifies `empty` |
-| `notify` | idempotency under a simulated crash between insert and send |
+| `dashboard` | row-set → view model: merged multi-source jobs, absent salary, missing score |
+| `server` | triage request parsing — rejects unknown status values and non-integer job ids |
 
 Fixtures come out of `var/raw/`, so they cost nothing to produce. Nothing else gets
 tests — no coverage target, no tests for CLI plumbing or DB round-trips.
@@ -631,7 +624,7 @@ jobsearch filter
 jobsearch queue --unscored [--limit N]
 jobsearch queue --coarse-passed --min N
 jobsearch score --id N --pass 1|2 --json '<structured result>'
-jobsearch notify [--min-score N]
+jobsearch serve [--port N]
 jobsearch status --id N --status S [--note "..."]
 jobsearch list [--status S] [--min-score N] [--since D] [--source X]
 jobsearch sources [--degraded]
@@ -653,7 +646,8 @@ Six phases, each independently useful and verifiable by running the CLI.
 3. **Filtering and activity** — `filters.py`, `jobsearch sweep`, plus the fixture tests
    for normalize/salary/dedupe/filters.
 4. **Scoring** — `queue`/`score`, structured output, both passes, and the `/harvest` skill.
-5. **Notification** — `notify.py`, the Telegram bot, its systemd user unit, `/review`.
+5. **Dashboard** — migration 002 dropping `notifications`, `dashboard.py`, `server.py`,
+   the page, and `/review`.
 6. **LinkedIn and repair** — `/harvest-linkedin` over Chrome MCP, the degraded-source
    repair path, and the repair report format.
 
@@ -665,6 +659,7 @@ Claude in the loop for reasons other than scoring.
 - Otta, Wellfound, Indeed, Glassdoor
 - Automatic application submission
 - CV tailoring per posting (`crafting-programmer-cvs` already covers authoring)
-- Any web UI — Telegram and the terminal are the interfaces
+- Any remotely-reachable UI, authentication, or multi-user support
+- Telegram or any other push delivery
 - Auto-applying repaired selectors without sign-off
 - Currency conversion as stored truth; only the derived comparison column
