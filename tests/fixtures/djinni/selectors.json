@@ -9,6 +9,7 @@
     "title": {"selector": "h2.job-item__position", "attr": "text"},
     "company": {"selector": ".text-gray-800", "attr": "text"},
     "location": {"selector": ".location-text", "attr": "text"},
+    "arrangement_hint": {"selector": "span.text-nowrap:-soup-contains-own(\"Remote\"), span.text-nowrap:-soup-contains-own(\"Office\")", "attr": "text"},
     "description": {"selector": ".js-truncated-text", "attr": "text"}
   }
 }

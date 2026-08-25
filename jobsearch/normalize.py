@@ -28,7 +28,7 @@ _PARENS = re.compile(r"\([^)]*\)")
 
 _REMOTE = re.compile(r"\b(fully\s+remote|full\s+remote|remote|віддалено|удалённо)\b", re.I)
 _HYBRID = re.compile(r"\b(hybrid|гібрид|гибрид)\b", re.I)
-_ONSITE = re.compile(r"\b(on[-\s]?site|in[-\s]?office|офіс|office[-\s]?based)\b", re.I)
+_ONSITE = re.compile(r"\b(on[-\s]?site|in[-\s]?office|офіс|office[-\s]?based|office\s+work)\b", re.I)
 
 _CONTRACT = re.compile(r"\b(b2b|contract|contractor|freelance|договір|гіг)\b", re.I)
 _PART = re.compile(r"\bpart[-\s]?time\b", re.I)

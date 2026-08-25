@@ -103,6 +103,24 @@ def test_diagnostics_report_field_fill_rates():
     assert result.diagnostics["fill_rates"]["salary_raw"] == 0.5
 
 
+MIN_ITEMS_SELECTORS = {**SELECTORS, "minimum_items": 2}
+
+SINGLE_ITEM = b"""<html><body><ul class="jobs">
+<li class="job"><a class="title" href="/jobs/201">Solo PHP Developer</a>
+<span class="company">Acme</span><span class="location">Remote</span></li>
+</ul></body></html>"""
+
+
+def test_below_minimum_items_classifies_broken_but_keeps_the_postings():
+    # Distinguishes this branch from every other "broken" path: a single item
+    # parses successfully (so it isn't dropped-for-required-fields broken),
+    # but falls short of minimum_items — the fallback that catches a selector
+    # matching an unrelated container.
+    result = _Probe().parse(_raw(SINGLE_ITEM), MIN_ITEMS_SELECTORS)
+    assert result.status == "broken"
+    assert len(result.postings) == 1
+
+
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "djinni"
 SELECTORS_PATH = FIXTURES / "selectors.json"
 
@@ -134,6 +152,12 @@ def test_djinni_changed_markup_classifies_broken(djinni_selectors):
     assert result.status == "broken"
 
 
+def test_djinni_arrangement_hint_extracted_for_most_postings(djinni_selectors):
+    result = DjinniAdapter().parse(_fixture("valid.html.gz"), djinni_selectors)
+    non_none = sum(1 for p in result.postings if p.arrangement_hint)
+    assert non_none >= 12
+
+
 DOU_FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "dou"
 
 
@@ -160,3 +184,9 @@ def test_dou_empty_fixture_classifies_empty(dou_selectors):
 
 def test_dou_changed_markup_classifies_broken(dou_selectors):
     assert DouAdapter().parse(_dou_fixture("changed-markup.html.gz"), dou_selectors).status == "broken"
+
+
+def test_dou_arrangement_hint_extracted_for_most_postings(dou_selectors):
+    result = DouAdapter().parse(_dou_fixture("valid.html.gz"), dou_selectors)
+    non_none = sum(1 for p in result.postings if p.arrangement_hint)
+    assert non_none >= 17

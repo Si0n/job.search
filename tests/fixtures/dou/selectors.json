@@ -9,6 +9,7 @@
     "title": {"selector": "a.vt", "attr": "text"},
     "company": {"selector": "a.company", "attr": "text"},
     "location": {"selector": ".cities", "attr": "text"},
+    "arrangement_hint": {"selector": ".cities", "attr": "text", "regex": "(remote|віддалено)"},
     "salary_raw": {"selector": ".salary", "attr": "text"},
     "description": {"selector": ".sh-info", "attr": "text"}
   }
