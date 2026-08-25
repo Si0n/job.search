@@ -1,0 +1,133 @@
+import gzip
+import json
+import pathlib
+from datetime import datetime
+
+import pytest
+
+from jobsearch.adapters.base import HtmlAdapter
+from jobsearch.adapters.djinni import DjinniAdapter
+from jobsearch.models import RawFetch
+
+SELECTORS = {
+    "container": "ul.jobs",
+    "item": "li.job",
+    "empty_state": "div.no-results",
+    "minimum_items": 1,
+    "fields": {
+        "external_id": {"selector": "a.title", "attr": "href", "regex": r"/jobs/(\d+)"},
+        "url":         {"selector": "a.title", "attr": "href", "absolute": True},
+        "title":       {"selector": "a.title", "attr": "text"},
+        "company":     {"selector": ".company", "attr": "text"},
+        "location":    {"selector": ".location", "attr": "text"},
+        "salary_raw":  {"selector": ".salary", "attr": "text"},
+        "description": {"selector": ".desc", "attr": "html"},
+    },
+}
+
+VALID = b"""<html><body><ul class="jobs">
+<li class="job"><a class="title" href="/jobs/101">Senior PHP Developer</a>
+<span class="company">Acme</span><span class="location">Remote</span>
+<span class="salary">$5000</span><div class="desc"><p>Laravel and Vue.</p></div></li>
+<li class="job"><a class="title" href="/jobs/102">Backend Engineer</a>
+<span class="company">Globex</span><span class="location">Kyiv</span>
+<div class="desc"><p>Go and Postgres.</p></div></li>
+</ul></body></html>"""
+
+EMPTY = b"""<html><body><ul class="jobs"></ul>
+<div class="no-results">Nothing matches your filters</div></body></html>"""
+
+CHANGED = VALID.replace(b'class="jobs"', b'class="job-list-v2"')
+
+ITEMS_GONE = b"""<html><body><ul class="jobs"></ul></body></html>"""
+
+
+class _Probe(HtmlAdapter):
+    name = "probe"
+    base_url = "https://example.test"
+
+    def build_url(self, query):
+        return self.base_url
+
+
+def _raw(body: bytes) -> RawFetch:
+    return RawFetch("probe", body, 200, datetime(2026, 8, 25))
+
+
+def test_valid_markup_parses_ok():
+    result = _Probe().parse(_raw(VALID), SELECTORS)
+    assert result.status == "ok"
+    assert len(result.postings) == 2
+    first = result.postings[0]
+    assert first.external_id == "101"
+    assert first.title == "Senior PHP Developer"
+    assert first.company == "Acme"
+    assert first.url == "https://example.test/jobs/101"
+    assert first.salary_raw == "$5000"
+    assert "Laravel" in first.description
+
+
+def test_missing_optional_field_is_none_not_a_failure():
+    result = _Probe().parse(_raw(VALID), SELECTORS)
+    assert result.postings[1].salary_raw is None
+
+
+def test_explicit_empty_state_classifies_empty():
+    result = _Probe().parse(_raw(EMPTY), SELECTORS)
+    assert result.status == "empty"
+    assert result.postings == []
+
+
+def test_changed_container_markup_classifies_broken():
+    result = _Probe().parse(_raw(CHANGED), SELECTORS)
+    assert result.status == "broken"
+    assert result.diagnostics["container_matched"] == 0
+
+
+def test_container_present_but_no_items_and_no_empty_marker_is_broken():
+    result = _Probe().parse(_raw(ITEMS_GONE), SELECTORS)
+    assert result.status == "broken"
+
+
+def test_items_that_all_fail_required_fields_classify_broken():
+    body = VALID.replace(b'class="title"', b'class="headline"')
+    result = _Probe().parse(_raw(body), SELECTORS)
+    assert result.status == "broken"
+    assert result.diagnostics["dropped"] == 2
+
+
+def test_diagnostics_report_field_fill_rates():
+    result = _Probe().parse(_raw(VALID), SELECTORS)
+    assert result.diagnostics["fill_rates"]["title"] == 1.0
+    assert result.diagnostics["fill_rates"]["salary_raw"] == 0.5
+
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "djinni"
+SELECTORS_PATH = FIXTURES / "selectors.json"
+
+
+def _fixture(name: str) -> RawFetch:
+    body = gzip.decompress((FIXTURES / name).read_bytes())
+    return RawFetch("djinni", body, 200, datetime(2026, 8, 25))
+
+
+@pytest.fixture(scope="module")
+def djinni_selectors():
+    return json.loads(SELECTORS_PATH.read_text())
+
+
+def test_djinni_valid_fixture_parses(djinni_selectors):
+    result = DjinniAdapter().parse(_fixture("valid.html.gz"), djinni_selectors)
+    assert result.status == "ok"
+    assert len(result.postings) >= 5
+    assert all(p.external_id and p.title and p.company and p.url for p in result.postings)
+
+
+def test_djinni_empty_fixture_classifies_empty(djinni_selectors):
+    result = DjinniAdapter().parse(_fixture("empty.html.gz"), djinni_selectors)
+    assert result.status == "empty"
+
+
+def test_djinni_changed_markup_classifies_broken(djinni_selectors):
+    result = DjinniAdapter().parse(_fixture("changed-markup.html.gz"), djinni_selectors)
+    assert result.status == "broken"

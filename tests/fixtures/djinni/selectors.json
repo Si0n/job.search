@@ -1,0 +1,14 @@
+{
+  "container": "#jobs_main",
+  "item": "div.job-item",
+  "empty_state": "#jobs_main p.text-secondary",
+  "minimum_items": 1,
+  "fields": {
+    "external_id": {"selector": "a.job_item__header-link", "attr": "href", "regex": "/jobs/(\\d+)"},
+    "url": {"selector": "a.job_item__header-link", "attr": "href", "absolute": true},
+    "title": {"selector": "h2.job-item__position", "attr": "text"},
+    "company": {"selector": ".text-gray-800", "attr": "text"},
+    "location": {"selector": ".location-text", "attr": "text"},
+    "description": {"selector": ".js-truncated-text", "attr": "text"}
+  }
+}
