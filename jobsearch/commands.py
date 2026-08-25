@@ -36,3 +36,14 @@ def filter_jobs(args) -> dict:
         return filters.apply(conn, profile)
     finally:
         conn.close()
+
+
+def sweep(args) -> dict:
+    from jobsearch import sweep as sweep_mod
+
+    settings = load_settings(args.env)
+    conn = db.connect(settings)
+    try:
+        return sweep_mod.run(conn)
+    finally:
+        conn.close()

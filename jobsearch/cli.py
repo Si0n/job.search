@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     harvest_parser.add_argument("--dry-run", action="store_true")
 
     sub.add_parser("filter", help="apply hard rules from profile.yaml")
+    sub.add_parser("sweep", help="age out postings that stopped appearing")
 
     return parser
 
@@ -49,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.filter_jobs(args))
+        return 0
+
+    if args.command == "sweep":
+        from jobsearch import commands
+
+        emit(commands.sweep(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")
