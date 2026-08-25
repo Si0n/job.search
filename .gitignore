@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 var/
 reports/
+jobsearch.egg-info/
+*.egg-info/
+.idea/
+*.pdf
