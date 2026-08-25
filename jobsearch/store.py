@@ -106,71 +106,79 @@ def _find_merge_target(conn, fingerprint: str, source_id: int, now: datetime,
 
 def upsert_posting(conn, source: dict, posting: RawPosting, raw_fetch_id: int | None,
                     rates: dict, now: datetime) -> tuple[int, bool]:
-    description = normalize.description(posting.description)
-    desc_hash = normalize.description_hash(description)
-    arrangement = normalize.arrangement(posting.arrangement_hint, description)
-    employment = normalize.employment(posting.employment_hint, description)
-    pay = salary_mod.parse(posting.salary_raw)
-    monthly_eur = salary_mod.to_monthly_eur(pay, rates)
-    fingerprint = dedupe.fingerprint(
-        posting.company, posting.title, posting.location or "", employment, arrangement
-    )
-
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, job_id, description_hash FROM job_sources "
-            "WHERE source_id=%s AND external_id=%s",
-            (source["id"], posting.external_id),
+    # Multiple statements run before the final commit (lookup, then either
+    # one-to-two updates or an insert pair, then _refresh_canonical's writes).
+    # Any failure partway through must roll back rather than leave this call's
+    # statements uncommitted in a connection a caller may reuse afterward.
+    try:
+        description = normalize.description(posting.description)
+        desc_hash = normalize.description_hash(description)
+        arrangement = normalize.arrangement(posting.arrangement_hint, description)
+        employment = normalize.employment(posting.employment_hint, description)
+        pay = salary_mod.parse(posting.salary_raw)
+        monthly_eur = salary_mod.to_monthly_eur(pay, rates)
+        fingerprint = dedupe.fingerprint(
+            posting.company, posting.title, posting.location or "", employment, arrangement
         )
-        existing = cur.fetchone()
 
-    if existing:
-        with conn.cursor() as cur:
-            if existing["description_hash"] != desc_hash:
-                cur.execute(
-                    "UPDATE job_sources SET description=%s, description_hash=%s, "
-                    "salary_raw=%s, url=%s, raw_fetch_id=%s, last_seen_at=%s, "
-                    "missed_runs=0, inactive_at=NULL WHERE id=%s",
-                    (description, desc_hash, posting.salary_raw, posting.url,
-                     raw_fetch_id, now, existing["id"]),
-                )
-            else:
-                cur.execute(
-                    "UPDATE job_sources SET last_seen_at=%s, missed_runs=0, "
-                    "inactive_at=NULL WHERE id=%s",
-                    (now, existing["id"]),
-                )
-        job_id = existing["job_id"]
-        is_new = False
-    else:
-        job_id = _find_merge_target(conn, fingerprint, source["id"], now, description)
-        if job_id is None:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO jobs (fingerprint, canonical_source_id, title, company, "
-                    "location, arrangement, employment_type, salary_min, salary_max, "
-                    "salary_currency, salary_period, salary_type, salary_source, "
-                    "salary_monthly_eur, first_seen_at, last_seen_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (fingerprint, source["id"], posting.title, posting.company,
-                     posting.location, arrangement, employment, pay.min, pay.max,
-                     pay.currency, pay.period, pay.type, pay.source, monthly_eur, now, now),
-                )
-                job_id = cur.lastrowid
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO job_sources (job_id, source_id, external_id, url, raw_fetch_id, "
-                "description, description_hash, salary_raw, posted_at, first_seen_at, "
-                "last_seen_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (job_id, source["id"], posting.external_id, posting.url, raw_fetch_id,
-                 description, desc_hash, posting.salary_raw, posting.posted_at, now, now),
+                "SELECT id, job_id, description_hash FROM job_sources "
+                "WHERE source_id=%s AND external_id=%s",
+                (source["id"], posting.external_id),
             )
-        is_new = True
+            existing = cur.fetchone()
 
-    _refresh_canonical(conn, job_id, source, posting, arrangement, employment,
-                        pay, monthly_eur, now)
-    conn.commit()
-    return job_id, is_new
+        if existing:
+            with conn.cursor() as cur:
+                if existing["description_hash"] != desc_hash:
+                    cur.execute(
+                        "UPDATE job_sources SET description=%s, description_hash=%s, "
+                        "salary_raw=%s, url=%s, raw_fetch_id=%s, last_seen_at=%s, "
+                        "missed_runs=0, inactive_at=NULL WHERE id=%s",
+                        (description, desc_hash, posting.salary_raw, posting.url,
+                         raw_fetch_id, now, existing["id"]),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE job_sources SET last_seen_at=%s, missed_runs=0, "
+                        "inactive_at=NULL WHERE id=%s",
+                        (now, existing["id"]),
+                    )
+            job_id = existing["job_id"]
+            is_new = False
+        else:
+            job_id = _find_merge_target(conn, fingerprint, source["id"], now, description)
+            if job_id is None:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO jobs (fingerprint, canonical_source_id, title, company, "
+                        "location, arrangement, employment_type, salary_min, salary_max, "
+                        "salary_currency, salary_period, salary_type, salary_source, "
+                        "salary_monthly_eur, first_seen_at, last_seen_at) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (fingerprint, source["id"], posting.title, posting.company,
+                         posting.location, arrangement, employment, pay.min, pay.max,
+                         pay.currency, pay.period, pay.type, pay.source, monthly_eur, now, now),
+                    )
+                    job_id = cur.lastrowid
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO job_sources (job_id, source_id, external_id, url, raw_fetch_id, "
+                    "description, description_hash, salary_raw, posted_at, first_seen_at, "
+                    "last_seen_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (job_id, source["id"], posting.external_id, posting.url, raw_fetch_id,
+                     description, desc_hash, posting.salary_raw, posting.posted_at, now, now),
+                )
+            is_new = True
+
+        _refresh_canonical(conn, job_id, source, posting, arrangement, employment,
+                            pay, monthly_eur, now)
+        conn.commit()
+        return job_id, is_new
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _refresh_canonical(conn, job_id: int, source: dict, posting: RawPosting,
