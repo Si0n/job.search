@@ -8,3 +8,4 @@ jobsearch.egg-info/
 *.egg-info/
 .idea/
 *.pdf
+profile.yaml

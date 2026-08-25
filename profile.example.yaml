@@ -1,0 +1,94 @@
+# Example profile. Copy to profile.yaml and fill in your own values.
+#
+# profile.yaml is gitignored on purpose: it carries your name, your LinkedIn,
+# and your salary floor. Keeping it out of git means none of that is published.
+#
+# Everything above `filters` is soft context Claude scores against.
+# `filters` are HARD rules Python enforces — and absent data NEVER fails one,
+# so a posting that states no salary passes min_salary_monthly_eur.
+#
+# Editing this file changes its content hash, which automatically re-queues
+# every job for re-scoring. No manual reset needed.
+
+version: 1
+
+identity:
+  name: Your Name
+  headline: Senior Backend Engineer
+  location: City, Country
+  timezone: Europe/Warsaw
+  linkedin: https://www.linkedin.com/in/your-handle/
+  years_experience: 10
+  languages:
+    - Ukrainian (native)
+    - Russian (native)
+    - English (B1-B2)
+    - Polish (B1)
+
+skills:
+  expert:
+    - PHP
+    - Laravel
+    - MySQL
+    - REST API design
+    - Payment integrations (SEPA, SWIFT, FPS, CHAPS, Canadian e-Transfers, Open Banking)
+    - PSP architecture
+    - KYC/KYB compliance flows
+  strong:
+    - Vue 3
+    - TypeScript
+    - Redis
+    - RabbitMQ
+    - Nginx
+    - Ubuntu
+    - CI/CD (Bitbucket Pipelines)
+    - AWS S3
+    - Multi-tenant data modelling
+    - Row-level isolation
+    - Crypto payment rails (BTC, USDT, ETH, TRX; custodial exchange APIs)
+  familiar:
+    - Python (Flask)
+    - Node.js (Sails.js)
+    - Claude API
+    - LangChain
+    - Web scraping / data-extraction pipelines
+
+domains:
+  preferred:
+    - fintech
+    - payments
+    - banking
+    - crypto
+  avoid: []
+
+preferences:
+  employment: [full-time, contract, part-time]
+  arrangement: [remote]
+  locations:
+    - Europe (preferred, for timezone overlap)
+    - Anywhere (a strong enough role outweighs the timezone cost)
+  salary:
+    min: 0            # your floor, in the currency below
+    currency: EUR
+    period: month
+  # company_size: the owner was never asked, so nothing is recorded here.
+  # Absent, not zero — do not infer a preference from this gap.
+
+weights:
+  technical_fit: 30
+  seniority_fit: 15
+  compensation_fit: 15
+  arrangement_fit: 10
+  domain_fit: 10
+  company_fit: 10
+  growth_potential: 10
+
+# Hard filters only — all other judgements belong to scoring.
+# Absent data always passes (no salary stated → passes min_salary_monthly_eur).
+filters:
+  require_arrangement: [remote]
+  require_employment: [full-time, contract, part-time]
+  min_salary_monthly_eur: 0   # 0 disables the floor
+  exclude_keywords: []
+  exclude_companies: []
+  languages_required: []
