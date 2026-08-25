@@ -40,6 +40,14 @@ def test_arrangement_hint_beats_description_text():
     assert normalize.arrangement("Remote", "Our office is in Berlin") == "remote"
 
 
+def test_a_compound_hint_prefers_hybrid_over_remote():
+    assert normalize.arrangement("Hybrid / Remote friendly", "") == "hybrid"
+
+
+def test_hybrid_does_not_match_unrelated_substrings():
+    assert normalize.arrangement(None, "Our hybridization strategy is unique") == "unknown"
+
+
 @pytest.mark.parametrize("hint,text,expected", [
     ("Full-time", "", "full-time"),
     (None, "B2B contract, 12 months", "contract"),
@@ -49,6 +57,11 @@ def test_arrangement_hint_beats_description_text():
 ])
 def test_employment_detection(hint, text, expected):
     assert normalize.employment(hint, text) == expected
+
+
+def test_internal_is_not_an_internship():
+    assert normalize.employment(None, "We build internal tools and APIs.") == "unknown"
+    assert normalize.employment(None, "Join our internal training programme, full-time.") == "full-time"
 
 
 def test_description_strips_markup_and_collapses_whitespace():

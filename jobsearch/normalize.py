@@ -27,12 +27,12 @@ _SPACE = re.compile(r"\s+")
 _PARENS = re.compile(r"\([^)]*\)")
 
 _REMOTE = re.compile(r"\b(fully\s+remote|full\s+remote|remote|віддалено|удалённо)\b", re.I)
-_HYBRID = re.compile(r"\bhybrid|гібрид|гибрид\b", re.I)
+_HYBRID = re.compile(r"\b(hybrid|гібрид|гибрид)\b", re.I)
 _ONSITE = re.compile(r"\b(on[-\s]?site|in[-\s]?office|офіс|office[-\s]?based)\b", re.I)
 
 _CONTRACT = re.compile(r"\b(b2b|contract|contractor|freelance|договір|гіг)\b", re.I)
 _PART = re.compile(r"\bpart[-\s]?time\b", re.I)
-_INTERN = re.compile(r"\b(intern|internship|trainee|стажув)\w*", re.I)
+_INTERN = re.compile(r"\b(internships?|interns?|trainees?)\b|\bстажув\w*", re.I)
 _FULL = re.compile(r"\bfull[-\s]?time\b", re.I)
 
 _BLOCK_TAGS = ("p", "div", "li", "br", "h1", "h2", "h3", "h4", "h5", "h6", "tr")
@@ -63,7 +63,7 @@ def location(raw: str | None) -> str:
 
 def arrangement(hint: str | None, text: str) -> str:
     # A source's own label is authoritative; description prose is a fallback.
-    for candidate, pattern in (("remote", _REMOTE), ("hybrid", _HYBRID), ("onsite", _ONSITE)):
+    for candidate, pattern in (("hybrid", _HYBRID), ("remote", _REMOTE), ("onsite", _ONSITE)):
         if hint and pattern.search(hint):
             return candidate
     haystack = text or ""
