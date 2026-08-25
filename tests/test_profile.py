@@ -38,3 +38,13 @@ def test_weights_reject_red_flags_as_a_dimension():
     }
     with pytest.raises(ValueError, match="red_flags"):
         validate_weights(weights)
+
+
+def test_weights_reject_a_missing_dimension_even_when_they_sum_to_100():
+    weights = {
+        "technical_fit": 35, "seniority_fit": 15, "compensation_fit": 15,
+        "arrangement_fit": 10, "domain_fit": 15, "company_fit": 10,
+        # growth_potential omitted
+    }
+    with pytest.raises(ValueError, match="missing"):
+        validate_weights(weights)

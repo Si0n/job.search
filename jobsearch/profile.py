@@ -28,7 +28,7 @@ class Profile:
 
 
 def compute_hash(data: dict) -> str:
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
