@@ -49,6 +49,23 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--port", type=int, default=8765)
     serve_parser.add_argument("--open", action="store_true", dest="open_browser")
 
+    list_parser = sub.add_parser("list", help="list jobs")
+    list_parser.add_argument("--status")
+    list_parser.add_argument("--min-score", type=int)
+    list_parser.add_argument("--since")
+    list_parser.add_argument("--source")
+    list_parser.add_argument("--limit", type=int, default=50)
+
+    status_parser = sub.add_parser("status", help="set application status")
+    status_parser.add_argument("--id", type=int, required=True)
+    status_parser.add_argument("--status", required=True)
+    status_parser.add_argument("--note")
+
+    sources_parser = sub.add_parser("sources", help="show source health")
+    sources_parser.add_argument("--degraded", action="store_true")
+
+    sub.add_parser("prune-cache", help="delete cached raw fetches older than 7 days")
+
     return parser
 
 
@@ -108,6 +125,30 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.serve(args))
+        return 0
+
+    if args.command == "list":
+        from jobsearch import commands
+
+        emit(commands.list_jobs(args))
+        return 0
+
+    if args.command == "status":
+        from jobsearch import commands
+
+        emit(commands.set_status(args))
+        return 0
+
+    if args.command == "sources":
+        from jobsearch import commands
+
+        emit(commands.sources(args))
+        return 0
+
+    if args.command == "prune-cache":
+        from jobsearch import commands
+
+        emit(commands.prune_cache(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")

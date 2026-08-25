@@ -14,6 +14,7 @@ from jobsearch.adapters import registry
 RAW_DIR = "var/raw"
 DELAY_SECONDS = 2.0
 NOT_MODIFIED = 304
+PRUNE_AFTER_DAYS = 7
 
 
 def _persist(raw, source_name: str, run_id: int) -> str:
@@ -94,6 +95,28 @@ def _harvest_source(conn, settings, source: dict) -> dict:
         store.finish_run(conn, run_id, error=summary["error"])
 
     return summary
+
+
+def prune_cache(days: int = PRUNE_AFTER_DAYS) -> dict:
+    """Delete cached raw fetch files older than `days`. Files only — the
+    matching raw_fetches row is left in place.
+
+    That row's value (etag/last_modified for conditional GETs, content_hash
+    and http_status for audit) doesn't depend on the archived body still
+    being on disk, and job_sources.raw_fetch_id has an FK to this table with
+    no ON DELETE clause (RESTRICT) — deleting a row a live posting still
+    references would fail outright. A row whose `path` no longer resolves is
+    an expected "cache aged out" state, not corruption: any reader of that
+    path (e.g. Task 23's repair flow) must treat a missing file as such,
+    not assume it exists because the row does.
+    """
+    cutoff = time.time() - days * 86400
+    removed = []
+    for path in Path(RAW_DIR).rglob("*.gz"):
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
+            removed.append(str(path))
+    return {"command": "prune-cache", "removed": len(removed)}
 
 
 def run(conn, settings, source_names: list[str] | None = None, dry_run: bool = False) -> dict:

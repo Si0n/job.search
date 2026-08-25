@@ -109,6 +109,51 @@ def score(args) -> dict:
         conn.close()
 
 
+def list_jobs(args) -> dict:
+    from jobsearch import store
+
+    settings = load_settings(args.env)
+    conn = db.connect(settings)
+    try:
+        jobs = store.list_jobs(
+            conn, status=args.status, min_score=args.min_score,
+            since=args.since, source=args.source, limit=args.limit,
+        )
+    finally:
+        conn.close()
+    return {"command": "list", "count": len(jobs), "jobs": jobs}
+
+
+def set_status(args) -> dict:
+    from jobsearch import store
+
+    settings = load_settings(args.env)
+    conn = db.connect(settings)
+    try:
+        result = store.set_status(conn, args.id, args.status, args.note)
+    finally:
+        conn.close()
+    return {"command": "status", **result}
+
+
+def sources(args) -> dict:
+    from jobsearch import store
+
+    settings = load_settings(args.env)
+    conn = db.connect(settings)
+    try:
+        rows = store.list_sources(conn, degraded=getattr(args, "degraded", False))
+    finally:
+        conn.close()
+    return {"command": "sources", "sources": rows}
+
+
+def prune_cache(args) -> dict:
+    from jobsearch import harvest as harvest_mod
+
+    return harvest_mod.prune_cache()
+
+
 def serve(args) -> dict:
     from jobsearch import server
 

@@ -35,6 +35,58 @@ def set_status(conn, job_id: int, status: str, note: str | None = None) -> dict:
     return {"job_id": job_id, "status": status}
 
 
+def list_jobs(conn, *, status=None, min_score=None, since=None, source=None,
+              limit: int = 50) -> list[dict]:
+    """Active, unfiltered jobs. Every filter is optional; all AND together.
+
+    Always excludes inactive/filtered jobs — that's the useful default view,
+    not "everything ever seen."
+
+    COALESCE, not a bare `sc.score >= %s`: sc.score is NULL for every
+    unscored job (LEFT JOIN scores), and `NULL >= n` is never true in SQL.
+    A bare comparison would silently drop every unscored job the moment
+    --min-score is used — the same bug dashboard.py's fetch_rows guards
+    against for the same reason.
+    """
+    clauses = ["j.inactive_at IS NULL", "j.filtered_at IS NULL"]
+    params: list = []
+
+    if min_score is not None:
+        clauses.append("COALESCE(sc.score, 0) >= %s")
+        params.append(min_score)
+    if status is not None:
+        clauses.append("a.status = %s")
+        params.append(status)
+    if since is not None:
+        clauses.append("j.first_seen_at >= %s")
+        params.append(since)
+    if source is not None:
+        clauses.append("s.name = %s")
+        params.append(source)
+
+    params.append(limit)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT j.id, j.title, j.company, j.location, j.arrangement, "
+            "       j.salary_min, j.salary_max, j.salary_currency, j.salary_period, "
+            "       sc.score, sc.verdict, sc.dimensions, sc.hard_concerns, "
+            "       a.status, a.note, "
+            "       (SELECT js2.url FROM job_sources js2 WHERE js2.job_id = j.id "
+            "         ORDER BY (js2.source_id = j.canonical_source_id) DESC, js2.id "
+            "         LIMIT 1) AS url, "
+            "       GROUP_CONCAT(DISTINCT s.name) AS sources "
+            "FROM jobs j "
+            "LEFT JOIN scores sc      ON sc.id = j.latest_score_id "
+            "LEFT JOIN applications a ON a.job_id = j.id "
+            "JOIN job_sources js      ON js.job_id = j.id "
+            "JOIN sources s           ON s.id = js.source_id "
+            f"WHERE {' AND '.join(clauses)} "
+            "GROUP BY j.id ORDER BY sc.score DESC, j.first_seen_at DESC LIMIT %s",
+            params,
+        )
+        return list(cur.fetchall())
+
+
 def finish_run(conn, run_id: int, *, fetched=None, new=None, error=None) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -62,6 +114,15 @@ def source_by_name(conn, name: str) -> dict:
     if row is None:
         raise LookupError(f"unknown source: {name}")
     return row
+
+
+def list_sources(conn, *, degraded: bool = False) -> list[dict]:
+    sql = "SELECT name, enabled, fetch_mode, status, consecutive_empty, last_ok_at FROM sources"
+    if degraded:
+        sql += " WHERE status = 'degraded'"
+    with conn.cursor() as cur:
+        cur.execute(sql)
+        return list(cur.fetchall())
 
 
 def last_fetch(conn, source_id: int) -> dict | None:
