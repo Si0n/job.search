@@ -415,7 +415,7 @@ CREATE TABLE scores (
   INDEX idx_scores_job_pass (job_id, `pass`, profile_hash)
 ) ENGINE=InnoDB;
 
--- SUPERSEDED: dropped by migrations/002_drop_notifications.sql in Task 19 after the
+-- SUPERSEDED: dropped by migrations/003_drop_notifications.sql in Task 19 after the
 -- owner replaced Telegram delivery with the local dashboard. Kept here because Task 2
 -- is already executed history; do not re-add it.
 CREATE TABLE notifications (
@@ -1504,22 +1504,36 @@ git commit -m "feat: fingerprinting and conservative cross-source merge rules"
   - `store.upsert_posting(conn, source: dict, posting: RawPosting, raw_fetch_id: int | None, rates: dict, now: datetime) -> tuple[int, bool]` → `(job_id, is_new)`
   - `store.mark_source(conn, source_id: int, status: str, saw_items: bool, now: datetime) -> None`
 
-- [ ] **Step 1: Add `canonical_source_id` to the schema**
+- [ ] **Step 1: Add `canonical_source_id` via a new migration**
 
-The canonical merge rule needs to know which source currently owns the merged field values. Edit `migrations/001_init.sql`, adding to the `jobs` table immediately after `fingerprint`:
+The canonical merge rule needs to know which source currently owns the merged field
+values. Create `migrations/002_add_canonical_source_id.sql`:
 
 ```sql
-  canonical_source_id INT NULL,
+ALTER TABLE jobs ADD COLUMN canonical_source_id INT NULL AFTER fingerprint;
 ```
 
-Since the schema has already been applied, drop and re-create rather than writing a second migration — there is no data worth preserving yet:
+Do **not** edit `001_init.sql` and do **not** drop the database. `001` is already applied
+and recorded in `schema_migrations`; editing an applied migration makes the file disagree
+with the database it produced, and every later checkout would apply a different schema
+than this one has. Forward-only migrations are the whole point of numbering them.
+
+Apply it:
 
 ```bash
-mysql -ujob_search -p"$(grep DB_PASSWORD .env | cut -d= -f2)" -e "DROP DATABASE job_search; CREATE DATABASE job_search CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 .venv/bin/jobsearch init-db
 ```
+Expected: `{"applied": ["002_add_canonical_source_id.sql"], "count": 1}` — and note that
+this is the first real exercise of the runner's incremental path, which until now had only
+ever applied a single migration to an empty database.
 
-Expected: `{"applied": ["001_init.sql"], "count": 1}`.
+Verify the column exists and the seeded sources survived:
+```bash
+mysql -ujob_search -p"$(grep DB_PASSWORD .env | cut -d= -f2)" job_search -e "
+SHOW COLUMNS FROM jobs LIKE 'canonical_source_id';
+SELECT name, fetch_mode, priority FROM sources ORDER BY priority;"
+```
+Expected: the column is present and nullable; all five sources still listed.
 
 - [ ] **Step 2: Write `jobsearch/store.py`**
 
@@ -1769,7 +1783,7 @@ Expected: `ok`
 - [ ] **Step 4: Commit**
 
 ```bash
-git add jobsearch/store.py migrations/001_init.sql
+git add jobsearch/store.py migrations/002_add_canonical_source_id.sql
 git commit -m "feat: store with priority-based canonical merge and specificity-based salary merge"
 ```
 
@@ -3708,7 +3722,7 @@ git commit -m "feat: /harvest skill orchestrating the nightly pipeline"
 ### Task 19: Drop the notifications table, shape the dashboard view model
 
 **Files:**
-- Create: `migrations/002_drop_notifications.sql`, `jobsearch/dashboard.py`
+- Create: `migrations/003_drop_notifications.sql`, `jobsearch/dashboard.py`
 - Test: `tests/test_dashboard.py`
 
 **Interfaces:**
@@ -3720,7 +3734,7 @@ git commit -m "feat: /harvest skill orchestrating the nightly pipeline"
 
 The split is the point: `build_view` is pure and carries every decision worth testing; `fetch_rows` is SQL with no logic in it. `server.py` (Task 20) calls both and knows nothing about shaping.
 
-- [ ] **Step 1: Write `migrations/002_drop_notifications.sql`**
+- [ ] **Step 1: Write `migrations/003_drop_notifications.sql`**
 
 ```sql
 DROP TABLE IF EXISTS notifications;
@@ -4013,12 +4027,12 @@ Run:
 .venv/bin/jobsearch init-db
 mysql -ujob_search -p"$(grep DB_PASSWORD .env | cut -d= -f2)" job_search -e "SHOW TABLES;"
 ```
-Expected: `{"applied": ["002_drop_notifications.sql"], "count": 1}` and eight tables — `notifications` gone.
+Expected: `{"applied": ["003_drop_notifications.sql"], "count": 1}` and eight tables — `notifications` gone.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add migrations/002_drop_notifications.sql jobsearch/dashboard.py \
+git add migrations/003_drop_notifications.sql jobsearch/dashboard.py \
         tests/test_dashboard.py jobsearch/config.py .env.example
 git commit -m "feat: dashboard view model, drop notifications table and Telegram config"
 ```

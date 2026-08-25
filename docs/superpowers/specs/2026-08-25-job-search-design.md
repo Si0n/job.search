@@ -646,7 +646,7 @@ Six phases, each independently useful and verifiable by running the CLI.
 3. **Filtering and activity** — `filters.py`, `jobsearch sweep`, plus the fixture tests
    for normalize/salary/dedupe/filters.
 4. **Scoring** — `queue`/`score`, structured output, both passes, and the `/harvest` skill.
-5. **Dashboard** — migration 002 dropping `notifications`, `dashboard.py`, `server.py`,
+5. **Dashboard** — migration 003 dropping `notifications`, `dashboard.py`, `server.py`,
    the page, and `/review`.
 6. **LinkedIn and repair** — `/harvest-linkedin` over Chrome MCP, the degraded-source
    repair path, and the repair report format.
