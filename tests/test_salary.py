@@ -76,3 +76,19 @@ def test_weak_currency_threshold_is_a_documented_approximation():
     assert parse("UAH 800,000").period == "month"
     assert parse("UAH 950,000").period == "year"
     assert parse("UAH 800,000/year").period == "year"   # explicit marker always wins
+
+
+@pytest.mark.parametrize("raw,expected_min,expected_max", [
+    ("€6000-8000/month", 6000, 8000),   # ASCII hyphen  U+002D
+    ("€6000–8000/month", 6000, 8000),  # en dash    U+2013
+    ("€6000—8000/month", 6000, 8000),  # em dash    U+2014
+    ("€6000−8000/month", 6000, 8000),  # minus sign U+2212
+])
+def test_range_separators_are_all_equivalent(raw, expected_min, expected_max):
+    result = parse(raw)
+    assert (result.min, result.max) == (expected_min, expected_max)
+
+
+def test_a_bare_numeric_range_does_not_bridge_into_a_later_currency_figure():
+    # The years range must not merge with the salary range.
+    assert parse("Senior dev, 3-5 years, $90k-$110k").min == 90000

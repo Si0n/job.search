@@ -24,16 +24,26 @@ _AMOUNT = re.compile(r"(\d[\d\s,._]*)\s*(k)?", re.I)
 _MONEY_ATOM = r"\d[\d\s,._]*(?:\s*k)?"
 _CURRENCY_MARK = r"(?:€|\$|£|₴|zł|\b(?:EUR|USD|GBP|PLN|UAH|CHF)\b)"
 
+# Range separators seen in scraped postings: ASCII hyphen (-, U+002D), en dash
+# (–), em dash (—), minus sign (−), or the word "to" with
+# surrounding whitespace ("€5000 to €7000"). Written as \uXXXX escapes — which
+# `re` interprets directly — rather than literal glyphs, so the supported set
+# is legible without trusting a font to render look-alike dashes distinctly.
+_RANGE_SEP = r"(?:\s*[-\u2013\u2014\u2212]\s*|\s+to\s+)"
+
 # salary_raw is scraped free text — "5+ years experience, €80,000/year" is
 # ordinary, not exotic. _AMOUNT alone would happily read "5" as the low end of
 # a range. So digits are only ever collected from a *money expression*: a
-# number, or a number-dash-number range, directly anchored to a currency
+# number, or a number-separator-number range, directly anchored to a currency
 # marker — either leading ("€80,000", "$90k-$110k") or trailing ("3000-5000
 # EUR"). A number with no currency marker anywhere next to it — years of
-# experience, headcount, PTO days — never enters the expression at all.
+# experience, headcount, PTO days — never enters the expression at all: the
+# mandatory currency-adjacency check applies regardless of which range
+# separator matched, so widening the separator set doesn't widen what counts
+# as "adjacent to a currency".
 _MONEY_EXPR = re.compile(
-    rf"{_CURRENCY_MARK}\s*{_MONEY_ATOM}(?:\s*-\s*(?:{_CURRENCY_MARK}\s*)?{_MONEY_ATOM})?"
-    rf"|{_MONEY_ATOM}(?:\s*-\s*(?:{_CURRENCY_MARK}\s*)?{_MONEY_ATOM})?\s*{_CURRENCY_MARK}",
+    rf"{_CURRENCY_MARK}\s*{_MONEY_ATOM}(?:{_RANGE_SEP}(?:{_CURRENCY_MARK}\s*)?{_MONEY_ATOM})?"
+    rf"|{_MONEY_ATOM}(?:{_RANGE_SEP}(?:{_CURRENCY_MARK}\s*)?{_MONEY_ATOM})?\s*{_CURRENCY_MARK}",
     re.I,
 )
 
