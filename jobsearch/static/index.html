@@ -84,8 +84,9 @@ pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
 <script>
 let JOBS = [];
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
-  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const safeUrl = u => /^https?:\/\//i.test(String(u ?? "")) ? String(u) : "#";
 
 async function load() {
   const p = new URLSearchParams();
@@ -111,16 +112,18 @@ function render() {
   $("#count").textContent = `${shown.length} of ${JOBS.length}`;
   $("#list").innerHTML = shown.length ? shown.map(card).join("")
     : '<div class="empty">Nothing here. Run <code>/harvest</code>, then reload.</div>';
+  $("#list").querySelectorAll("button[data-id]").forEach(b =>
+    b.addEventListener("click", () => mark(Number(b.dataset.id), b.dataset.status)));
 }
 
 function card(j) {
   const cls = j.score >= 8 ? "s-hi" : j.score >= 6 ? "s-mid" : "s-lo";
   const dims = Object.entries(j.dimensions || {})
-    .map(([k, v]) => `<span class="dim">${esc(k.replace(/_/g, " "))} ${v}</span>`).join("");
+    .map(([k, v]) => `<span class="dim">${esc(k.replace(/_/g, " "))} ${esc(v)}</span>`).join("");
   const concerns = (j.hard_concerns || [])
     .map(c => `<span class="tag concern">${esc(c)}</span>`).join("");
   const links = j.sources
-    .map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>`)
+    .map(s => `<a href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener">${esc(s.name)}</a>`)
     .join(" · ");
   return `<article class="card ${j.is_new ? "new" : ""}">
     <div class="top">
@@ -141,9 +144,9 @@ function card(j) {
     </div>` : ""}
     <details><summary>description</summary><pre class="desc">${esc(j.description)}</pre></details>
     <div class="actions">
-      <button onclick="mark(${j.id},'interested')">Interested</button>
-      <button onclick="mark(${j.id},'applied')">Applied</button>
-      <button onclick="mark(${j.id},'skipped')">Skip</button>
+      <button data-id="${j.id}" data-status="interested">Interested</button>
+      <button data-id="${j.id}" data-status="applied">Applied</button>
+      <button data-id="${j.id}" data-status="skipped">Skip</button>
     </div>
   </article>`;
 }

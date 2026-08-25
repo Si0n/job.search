@@ -48,6 +48,13 @@ def test_a_numeric_string_id_is_accepted():
     assert parse_status_request(body(id="42", status="skipped")) == (42, "skipped", None)
 
 
+def test_a_boolean_id_is_rejected():
+    # bool is a subclass of int in Python: int(True) == 1. Without an explicit
+    # guard, {"id": true} would silently become job id 1.
+    with pytest.raises(ValueError, match="id"):
+        parse_status_request(body(id=True, status="applied"))
+
+
 def test_malformed_json_is_rejected():
     with pytest.raises(ValueError):
         parse_status_request(b"{not json")

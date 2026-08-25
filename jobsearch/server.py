@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,6 +30,10 @@ def parse_status_request(body: bytes) -> tuple[int, str, str | None]:
         raise ValueError("malformed JSON: expected an object")
 
     raw_id = payload.get("id")
+    if isinstance(raw_id, bool):
+        # bool subclasses int in Python — int(True) == 1 — so without this,
+        # {"id": true} would silently become job id 1.
+        raise ValueError(f"invalid job id: {raw_id!r}")
     try:
         job_id = int(raw_id)
     except (TypeError, ValueError):
@@ -47,7 +53,7 @@ def parse_status_request(body: bytes) -> tuple[int, str, str | None]:
     return job_id, status, note
 
 
-def _make_handler(settings):
+def _make_handler(settings, port):
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload: dict | list, content_type="application/json"):
             data = json.dumps(payload, default=str).encode()
@@ -79,6 +85,10 @@ def _make_handler(settings):
                         min_score=int(min_score) if min_score else None,
                         include_triaged=include_triaged,
                     )
+                except Exception:
+                    traceback.print_exc(file=sys.stderr)
+                    self._send(400, {"error": "could not load jobs"})
+                    return
                 finally:
                     conn.close()
                 self._send(200, dashboard.build_view(jobs, postings))
@@ -89,6 +99,24 @@ def _make_handler(settings):
         def do_POST(self):
             if urlparse(self.path).path != "/api/status":
                 self._send(404, {"error": "not found"})
+                return
+
+            # CSRF: a cross-origin fetch() sending application/json is preflighted
+            # and blocked (this server answers no OPTIONS) — but an HTML form with
+            # enctype="text/plain" is not preflighted, and the classic name/value
+            # trick makes such a body parse as valid JSON. The whitelist below is
+            # what actually stops it; a form can only send urlencoded, multipart,
+            # or text/plain, never application/json.
+            content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            if content_type != "application/json":
+                self._send(415, {"error": "Content-Type must be application/json"})
+                return
+
+            # Blunts DNS rebinding: a hostile domain resolving to 127.0.0.1 still
+            # sends a Host header naming itself, not this server's address.
+            host = self.headers.get("Host", "")
+            if host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+                self._send(400, {"error": "invalid host"})
                 return
 
             length = int(self.headers.get("Content-Length") or 0)
@@ -105,6 +133,15 @@ def _make_handler(settings):
             conn = db.connect(settings)
             try:
                 result = store.set_status(conn, job_id, status, note)
+            except Exception:
+                # A syntactically valid but nonexistent job id trips the
+                # applications.job_id foreign key. That's a client error, not a
+                # server crash — surface it the same way parse_status_request's
+                # ValueErrors are surfaced, but log it since a real DB failure
+                # should stay visible.
+                traceback.print_exc(file=sys.stderr)
+                self._send(400, {"error": "could not record status (unknown job id?)"})
+                return
             finally:
                 conn.close()
             self._send(200, result)
@@ -119,7 +156,7 @@ def _make_handler(settings):
 
 def run(settings, host: str = "127.0.0.1", port: int = 8765,
         open_browser: bool = False) -> None:
-    httpd = ThreadingHTTPServer((host, port), _make_handler(settings))
+    httpd = ThreadingHTTPServer((host, port), _make_handler(settings, port))
     url = f"http://{host}:{port}/"
     print(f"jobsearch dashboard on {url}  (ctrl-c to stop)")
     if open_browser:
