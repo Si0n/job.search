@@ -36,8 +36,8 @@ re-evaluates hard rules over what's still active.
 `filter` returns `{"evaluated", "passed", "filtered"}`. If `filtered` is more than
 roughly 80% of `evaluated`, say so explicitly in the final summary. That ratio is far
 more often a wrong `min_salary_monthly_eur` or a stale currency rate than a genuinely
-bad night — a filter eating the queue looks exactly like "no good jobs today," and it is
-this project's most-repeated failure mode.
+bad night — a filter eating the queue looks exactly like "no good jobs today" when the
+actual cause is a misconfigured number.
 
 ## Step 3 — Score, pass 1 (coarse triage)
 
@@ -54,6 +54,11 @@ jobsearch queue --unscored --limit 60
 
 The payload carries `jobs`, `weights`, and `profile`. Each job's `description` is
 truncated to 800 characters (`description_truncated: true`).
+
+Compare the returned `count` against the `--limit` you passed (60). If they're equal,
+the queue was capped and more unscored jobs almost certainly remain — note this
+explicitly in the Step 8 summary. Without that check, a run that only got through part
+of the backlog reads identically to one that cleared it completely.
 
 This pass exists only to discard obvious mismatches before spending a full read on
 them. On an 800-character fragment there is not enough text to support per-dimension
@@ -92,8 +97,9 @@ Seven dimensions, always all seven:
   floor (see "Already decided" below). Judge what's left ambiguous: is "competitive
   salary" with no number a warning sign or just this market's convention; does a stated
   range's low end matter.
-- **`arrangement_fit`** — see below. Do not score "is it remote" — the hard filter
-  already guarantees that for everything reaching you.
+- **`arrangement_fit`** — see below. Most postings that reach you already state remote
+  explicitly; score timezone practicality and arrangement certainty, not "is it remote"
+  itself.
 - **`domain_fit`** — proximity to `profile.domains.preferred` (fintech, payments,
   banking, crypto). Judge adjacency, not just an exact-name match.
 - **`company_fit`** — size, stage, and reputation signals present in the posting text
@@ -102,9 +108,12 @@ Seven dimensions, always all seven:
 
 #### `arrangement_fit`, defined explicitly
 
-The hard filter already requires `remote`, and in practice 118 of 119 harvested jobs
-are remote — "is it remote" is a constant here, and scoring it would waste this
-dimension's entire weight on a foregone conclusion. Score two other signals instead:
+The hard filter only rejects an arrangement that is explicitly stated and not `remote`
+— absent data never fails a filter, so a posting whose arrangement came back `unknown`
+passes through with no guarantee at all about how it actually works. Most of what
+reaches you already states remote, so scoring "is it remote" as a yes/no would waste
+this dimension's weight on something usually already settled. Score two other signals
+instead:
 
 1. **Timezone overlap practicality from Warsaw (CET/CEST).** A posting whose hours are
    CET/EU-adjacent scores higher than one that demands US-only overlap. A US-hours
@@ -112,8 +121,9 @@ dimension's entire weight on a foregone conclusion. Score two other signals inst
    enough role outweighs the timezone cost. Score it down; do not zero it out or treat
    it as disqualifying.
 2. **Arrangement certainty.** A posting that states "remote" explicitly scores above
-   one where `arrangement` came back `unknown` and remote is only inferred. An explicit
-   commitment is worth more than an assumption that merely happened to pass the filter.
+   one where `arrangement` came back `unknown`. This is exactly where the filter's
+   guarantee runs out — an explicit commitment is worth more than an assumption that
+   merely happened to pass through unchecked.
 
 #### Red flags — a penalty, not a dimension
 
@@ -154,8 +164,13 @@ the employer itself.
 }
 ```
 
-`score` is the weighted sum of `dimensions` (using `weights`) divided by 10, rounded,
+`score` is the weighted sum of `dimensions` — each dimension's value times its weight
+from `weights`, summed — divided by the total of all the weights (sum `weights`'
+values yourself; don't hardcode 100, even though that's what it is today), rounded,
 **minus** `red_flag_penalty`, clamped to 0–10.
+
+Worked from the example above: `(9×30 + 7×15 + 8×15 + 10×10 + 6×10 + 7×10 + 6×10) / 100
+= 785 / 100 = 7.85` → rounds to 8, matching `"score": 8` above.
 
 Before calling `score`, check your own payload: all seven dimension keys from `weights`
 must be present in `dimensions`, each a 0–10 integer. `jobsearch score --pass 2` stores
@@ -164,9 +179,21 @@ stores whatever partial dict you sent. That reads later as "analyzed, nothing fo
 not "not analyzed," and nothing downstream catches the difference. If a dimension is
 missing, fix the payload yourself before sending. Never call `score` with a partial one.
 
+Write the payload to a file with the Write tool (e.g. `/tmp/jobsearch-payload.json`),
+then pass it via command substitution — **double-quoted**:
+
 ```bash
-jobsearch score --id <job_id> --run-id <run_id> --pass 2 --json '<payload>'
+jobsearch score --id <job_id> --run-id <run_id> --pass 2 --json "$(cat /tmp/jobsearch-payload.json)"
 ```
+
+Verdicts, strengths, and weaknesses routinely contain apostrophes ("the company's
+stack," "it's a strong match"). A single apostrophe ends a single-quoted `'<payload>'`
+argument early and the command fails — silently, per the rule at the top of this file
+("if a command exits non-zero, report and continue"), so the score just never gets
+recorded and nothing in the summary flags it. Double quotes don't have that problem:
+the file's content is inserted as one literal argument, with apostrophes, `$`, and
+backticks passed through as-is rather than re-parsed. Do not "simplify" this back to
+single quotes.
 
 When every job in the pass-2 queue is recorded, close the run:
 
@@ -200,5 +227,6 @@ the 7-day cap only holds because this step runs every night.
 
 Three or four lines, written to be read in a cron log six weeks from now: counts
 harvested and new, how many scored at each pass, how many now sit above 7 in the
-dashboard, any degraded source or error, and the Step 2 filter-ratio warning if it
-triggered.
+dashboard, any degraded source or error, the Step 2 filter-ratio warning if it
+triggered, and whether Step 3's queue was capped (say so plainly if more unscored jobs
+remain for next run).
