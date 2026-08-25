@@ -154,6 +154,21 @@ def prune_cache(args) -> dict:
     return harvest_mod.prune_cache()
 
 
+def ingest(args) -> dict:
+    import json as json_mod
+    import sys
+
+    from jobsearch import ingest as ingest_mod
+
+    settings = load_settings(args.env)
+    payload = json_mod.load(sys.stdin)
+    conn = db.connect(settings)
+    try:
+        return ingest_mod.run(conn, settings, args.source, payload)
+    finally:
+        conn.close()
+
+
 def serve(args) -> dict:
     from jobsearch import server
 

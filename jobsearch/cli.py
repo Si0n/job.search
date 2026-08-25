@@ -70,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("prune-cache", help="delete cached raw fetches older than 7 days")
 
+    ingest_parser = sub.add_parser("ingest", help="ingest postings from stdin as JSON")
+    ingest_parser.add_argument("--source", required=True)
+    ingest_parser.add_argument("--stdin", action="store_true", default=True)
+
     return parser
 
 
@@ -153,6 +157,12 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.prune_cache(args))
+        return 0
+
+    if args.command == "ingest":
+        from jobsearch import commands
+
+        emit(commands.ingest(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")
