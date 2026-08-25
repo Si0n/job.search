@@ -6,6 +6,7 @@ from datetime import datetime
 from jobsearch import salary
 from jobsearch.adapters.base import JsonAdapter
 from jobsearch.adapters.remoteok import RemoteOkAdapter
+from jobsearch.adapters.weworkremotely import WeWorkRemotelyAdapter
 from jobsearch.models import RawFetch, RawPosting
 
 SELECTORS = {
@@ -142,4 +143,41 @@ def test_remoteok_valid_fixture_parses():
 def test_remoteok_empty_fixture_classifies_empty():
     selectors = json.loads((REMOTEOK / "selectors.json").read_text())
     result = RemoteOkAdapter().parse(_remoteok_fixture("empty.json.gz"), selectors)
+    assert result.status == "empty"
+
+
+def test_wwr_post_process_forces_remote_arrangement():
+    posting = WeWorkRemotelyAdapter().post_process(_blank_posting(), {})
+    assert posting.arrangement_hint == "remote"
+
+
+def test_wwr_post_process_splits_company_and_title_on_first_colon():
+    posting = _blank_posting()
+    posting.title = "Yooli: FULL TIME: Software Engineer Position - React and Rest"
+    posting.company = posting.title
+    result = WeWorkRemotelyAdapter().post_process(posting, {})
+    assert result.company == "Yooli"
+    assert result.title == "FULL TIME: Software Engineer Position - React and Rest"
+
+
+WWR = pathlib.Path(__file__).parent / "fixtures" / "weworkremotely"
+
+
+def _wwr_fixture(name: str) -> RawFetch:
+    body = gzip.decompress((WWR / name).read_bytes())
+    return RawFetch("weworkremotely", body, 200, datetime(2026, 8, 25))
+
+
+def test_wwr_valid_fixture_parses():
+    selectors = json.loads((WWR / "selectors.json").read_text())
+    result = WeWorkRemotelyAdapter().parse(_wwr_fixture("valid.json.gz"), selectors)
+    assert result.status == "ok"
+    assert all(p.company and p.title and p.company != p.title for p in result.postings)
+    assert all(p.arrangement_hint == "remote" for p in result.postings)
+    assert all(p.salary_raw is None for p in result.postings)
+
+
+def test_wwr_empty_fixture_classifies_empty():
+    selectors = json.loads((WWR / "selectors.json").read_text())
+    result = WeWorkRemotelyAdapter().parse(_wwr_fixture("empty.json.gz"), selectors)
     assert result.status == "empty"

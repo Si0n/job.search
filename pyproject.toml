@@ -8,6 +8,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "lxml>=5.2",
     "PyYAML>=6.0",
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]
