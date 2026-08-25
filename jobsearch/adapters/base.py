@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from urllib.parse import urljoin
@@ -35,8 +36,19 @@ class Adapter(ABC):
             if conditional.get("last_modified"):
                 headers["If-Modified-Since"] = conditional["last_modified"]
 
-        response = httpx.get(url, headers=headers, timeout=TIMEOUT, follow_redirects=True)
-        response.raise_for_status()
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = httpx.get(url, headers=headers, timeout=TIMEOUT, follow_redirects=True)
+                response.raise_for_status()
+                break
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+        else:
+            raise last_error
+
         return RawFetch(
             source_name=self.name,
             body=response.content,

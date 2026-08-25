@@ -25,6 +25,11 @@ class WeWorkRemotelyAdapter(JsonAdapter):
 
     def fetch(self, query: dict, conditional: dict | None = None) -> RawFetch:
         raw = self._get(self.build_url(query or {}), conditional)
+        if raw.http_status == 304:
+            # Body is empty by definition of 304 — ElementTree.fromstring("")
+            # would raise. Hand the untouched 304 straight back so harvest's
+            # not-modified branch (which never reaches parse()) can see it.
+            return raw
         items = []
         root = ElementTree.fromstring(raw.text())
         for item in root.iterfind(".//item"):

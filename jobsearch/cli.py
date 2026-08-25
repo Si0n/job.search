@@ -20,6 +20,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("init-db", help="create the schema and apply migrations")
 
+    harvest_parser = sub.add_parser("harvest", help="fetch and store postings from HTTP sources")
+    harvest_parser.add_argument("--source", action="append", dest="sources")
+    harvest_parser.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -31,6 +35,12 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.init_db(args))
+        return 0
+
+    if args.command == "harvest":
+        from jobsearch import commands
+
+        emit(commands.harvest(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")
