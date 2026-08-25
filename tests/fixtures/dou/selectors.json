@@ -1,0 +1,15 @@
+{
+  "container": "#vacancyListId",
+  "item": "li.l-vacancy",
+  "empty_state": ".b-inner-page-header h1:-soup-contains(\"Немає\")",
+  "minimum_items": 1,
+  "fields": {
+    "external_id": {"selector": "a.vt", "attr": "href", "regex": "/vacancies/(\\d+)/"},
+    "url": {"selector": "a.vt", "attr": "href", "absolute": true},
+    "title": {"selector": "a.vt", "attr": "text"},
+    "company": {"selector": "a.company", "attr": "text"},
+    "location": {"selector": ".cities", "attr": "text"},
+    "salary_raw": {"selector": ".salary", "attr": "text"},
+    "description": {"selector": ".sh-info", "attr": "text"}
+  }
+}

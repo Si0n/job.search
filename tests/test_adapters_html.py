@@ -7,6 +7,7 @@ import pytest
 
 from jobsearch.adapters.base import HtmlAdapter
 from jobsearch.adapters.djinni import DjinniAdapter
+from jobsearch.adapters.dou import DouAdapter
 from jobsearch.models import RawFetch
 
 SELECTORS = {
@@ -131,3 +132,31 @@ def test_djinni_empty_fixture_classifies_empty(djinni_selectors):
 def test_djinni_changed_markup_classifies_broken(djinni_selectors):
     result = DjinniAdapter().parse(_fixture("changed-markup.html.gz"), djinni_selectors)
     assert result.status == "broken"
+
+
+DOU_FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "dou"
+
+
+def _dou_fixture(name: str) -> RawFetch:
+    body = gzip.decompress((DOU_FIXTURES / name).read_bytes())
+    return RawFetch("dou", body, 200, datetime(2026, 8, 25))
+
+
+@pytest.fixture(scope="module")
+def dou_selectors():
+    return json.loads((DOU_FIXTURES / "selectors.json").read_text())
+
+
+def test_dou_valid_fixture_parses(dou_selectors):
+    result = DouAdapter().parse(_dou_fixture("valid.html.gz"), dou_selectors)
+    assert result.status == "ok"
+    assert len(result.postings) >= 5
+    assert all(p.external_id and p.title and p.company and p.url for p in result.postings)
+
+
+def test_dou_empty_fixture_classifies_empty(dou_selectors):
+    assert DouAdapter().parse(_dou_fixture("empty.html.gz"), dou_selectors).status == "empty"
+
+
+def test_dou_changed_markup_classifies_broken(dou_selectors):
+    assert DouAdapter().parse(_dou_fixture("changed-markup.html.gz"), dou_selectors).status == "broken"
