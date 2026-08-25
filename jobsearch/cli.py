@@ -58,7 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = sub.add_parser("status", help="set application status")
     status_parser.add_argument("--id", type=int, required=True)
-    status_parser.add_argument("--status", required=True)
+    status_parser.add_argument(
+        "--status", required=True,
+        choices=["interested", "skipped", "applied", "replied",
+                 "rejected", "interviewing", "offer"],
+    )
     status_parser.add_argument("--note")
 
     sources_parser = sub.add_parser("sources", help="show source health")

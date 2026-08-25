@@ -20,7 +20,7 @@ def start_run(conn, kind: str, source_id: int | None = None) -> int:
 def set_status(conn, job_id: int, status: str, note: str | None = None) -> dict:
     """Triage a job. One row per job — a re-triage overwrites, it doesn't append.
 
-    Minimal version for Task 20's /api/status handler; Task 21 extends this.
+    Shared by the dashboard's /api/status handler and the `status` CLI command.
     """
     now = datetime.now()
     with conn.cursor() as cur:
@@ -126,6 +126,13 @@ def list_sources(conn, *, degraded: bool = False) -> list[dict]:
 
 
 def last_fetch(conn, source_id: int) -> dict | None:
+    """Most recent raw_fetches row for a source, used for conditional GETs.
+
+    The row's `path` may point at a file harvest.prune_cache() has since
+    deleted (files older than 7 days are pruned; the row is kept — see that
+    function's docstring). A caller that opens `path` must handle it being
+    gone; the row's existence is not a guarantee the file still is.
+    """
     with conn.cursor() as cur:
         cur.execute(
             "SELECT * FROM raw_fetches WHERE source_id=%s ORDER BY fetched_at DESC LIMIT 1",
