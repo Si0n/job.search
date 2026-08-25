@@ -17,6 +17,24 @@ def start_run(conn, kind: str, source_id: int | None = None) -> int:
     return run_id
 
 
+def set_status(conn, job_id: int, status: str, note: str | None = None) -> dict:
+    """Triage a job. One row per job — a re-triage overwrites, it doesn't append.
+
+    Minimal version for Task 20's /api/status handler; Task 21 extends this.
+    """
+    now = datetime.now()
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO applications (job_id, status, note, updated_at) "
+            "VALUES (%s, %s, %s, %s) "
+            "ON DUPLICATE KEY UPDATE status=VALUES(status), note=VALUES(note), "
+            "updated_at=VALUES(updated_at)",
+            (job_id, status, note, now),
+        )
+    conn.commit()
+    return {"job_id": job_id, "status": status}
+
+
 def finish_run(conn, run_id: int, *, fetched=None, new=None, error=None) -> None:
     with conn.cursor() as cur:
         cur.execute(

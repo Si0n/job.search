@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser.add_argument("--pass", type=int, choices=[1, 2], required=True, dest="pass_no")
     score_parser.add_argument("--json", required=True, help="the scoring payload as JSON")
 
+    serve_parser = sub.add_parser("serve", help="run the local dashboard")
+    serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--open", action="store_true", dest="open_browser")
+
     return parser
 
 
@@ -98,6 +102,12 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.score(args))
+        return 0
+
+    if args.command == "serve":
+        from jobsearch import commands
+
+        emit(commands.serve(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")

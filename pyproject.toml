@@ -23,3 +23,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["jobsearch*"]
+
+[tool.setuptools.package-data]
+jobsearch = ["static/*.html"]

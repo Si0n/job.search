@@ -107,3 +107,11 @@ def score(args) -> dict:
         return scoring.record(conn, args.id, args.run_id, args.pass_no, payload, profile)
     finally:
         conn.close()
+
+
+def serve(args) -> dict:
+    from jobsearch import server
+
+    server.run(load_settings(args.env), port=args.port,
+               open_browser=getattr(args, "open_browser", False))
+    return {"command": "serve", "status": "stopped"}

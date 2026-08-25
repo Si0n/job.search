@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jobsearch</title>
+<style>
+:root {
+  --bg:#f6f7f9; --card:#fff; --ink:#12151a; --muted:#6b7280; --line:#e4e7ec;
+  --accent:#2563eb; --good:#15803d; --warn:#b45309; --bad:#b91c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0f1115; --card:#171a21; --ink:#e6e8ec; --muted:#9aa3b2; --line:#262b36;
+    --accent:#60a5fa; --good:#4ade80; --warn:#fbbf24; --bad:#f87171;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);
+  border-bottom:1px solid var(--line);padding:14px 20px}
+h1{margin:0 0 10px;font-size:17px;letter-spacing:-.01em}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.controls input,.controls select{background:var(--card);color:var(--ink);
+  border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit}
+.controls input[type=search]{min-width:230px;flex:1}
+#count{color:var(--muted);font-size:13px;margin-left:auto}
+main{padding:18px 20px;max-width:1000px;margin:0 auto;
+  display:flex;flex-direction:column;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px}
+.card.new{border-left:3px solid var(--accent)}
+.top{display:flex;gap:12px;align-items:flex-start}
+.score{flex:0 0 46px;height:46px;border-radius:9px;display:grid;place-items:center;
+  font-weight:700;font-size:17px;background:var(--line)}
+.s-hi{background:color-mix(in srgb,var(--good) 22%,transparent);color:var(--good)}
+.s-mid{background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn)}
+.s-lo{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+.title{font-weight:650;font-size:15.5px}
+.meta{color:var(--muted);font-size:13px;margin-top:2px}
+.verdict{margin:10px 0 0}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);
+  color:var(--muted)}
+.tag.concern{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
+.dims{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
+.dim{font-size:11.5px;color:var(--muted);border:1px solid var(--line);
+  border-radius:5px;padding:1px 6px}
+.actions{display:flex;gap:7px;margin-top:12px;flex-wrap:wrap}
+button{font:inherit;font-size:13px;padding:5px 12px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--ink)}
+button:hover{border-color:var(--accent);color:var(--accent)}
+a{color:var(--accent)}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--muted);font-size:13px}
+pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
+  max-height:340px;overflow:auto}
+.empty{color:var(--muted);text-align:center;padding:50px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>jobsearch</h1>
+  <div class="controls">
+    <input type="search" id="q" placeholder="search title, company, description">
+    <select id="minScore">
+      <option value="7">score ≥ 7</option>
+      <option value="8">score ≥ 8</option>
+      <option value="6">score ≥ 6</option>
+      <option value="">any score</option>
+    </select>
+    <select id="src"><option value="">all sources</option></select>
+    <select id="arr">
+      <option value="">any arrangement</option>
+      <option value="remote">remote</option>
+      <option value="hybrid">hybrid</option>
+      <option value="unknown">unspecified</option>
+    </select>
+    <label><input type="checkbox" id="all"> include triaged</label>
+    <span id="count"></span>
+  </div>
+</header>
+<main id="list"></main>
+<script>
+let JOBS = [];
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function load() {
+  const p = new URLSearchParams();
+  if ($("#minScore").value) p.set("min_score", $("#minScore").value);
+  if ($("#all").checked) p.set("all", "1");
+  JOBS = await (await fetch("/api/jobs?" + p)).json();
+
+  const sources = [...new Set(JOBS.flatMap(j => j.sources.map(s => s.name)))].sort();
+  const keep = $("#src").value;
+  $("#src").innerHTML = '<option value="">all sources</option>' +
+    sources.map(s => `<option ${s === keep ? "selected" : ""}>${esc(s)}</option>`).join("");
+  render();
+}
+
+function render() {
+  const q = $("#q").value.toLowerCase().trim();
+  const src = $("#src").value, arr = $("#arr").value;
+  const shown = JOBS.filter(j =>
+    (!src || j.sources.some(s => s.name === src)) &&
+    (!arr || j.arrangement === arr) &&
+    (!q || (j.title + " " + j.company + " " + j.description).toLowerCase().includes(q)));
+
+  $("#count").textContent = `${shown.length} of ${JOBS.length}`;
+  $("#list").innerHTML = shown.length ? shown.map(card).join("")
+    : '<div class="empty">Nothing here. Run <code>/harvest</code>, then reload.</div>';
+}
+
+function card(j) {
+  const cls = j.score >= 8 ? "s-hi" : j.score >= 6 ? "s-mid" : "s-lo";
+  const dims = Object.entries(j.dimensions || {})
+    .map(([k, v]) => `<span class="dim">${esc(k.replace(/_/g, " "))} ${v}</span>`).join("");
+  const concerns = (j.hard_concerns || [])
+    .map(c => `<span class="tag concern">${esc(c)}</span>`).join("");
+  const links = j.sources
+    .map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>`)
+    .join(" · ");
+  return `<article class="card ${j.is_new ? "new" : ""}">
+    <div class="top">
+      <div class="score ${cls}">${j.score ?? "–"}</div>
+      <div style="flex:1">
+        <div class="title">${esc(j.title)} — ${esc(j.company)}</div>
+        <div class="meta">${esc(j.location || j.arrangement)} · ${esc(j.salary.text)}
+          · ${esc(j.employment_type)} · ${links}
+          ${j.status ? ` · <b>${esc(j.status)}</b>` : ""}</div>
+      </div>
+    </div>
+    ${j.verdict ? `<p class="verdict">${esc(j.verdict)}</p>` : ""}
+    ${concerns ? `<div class="tags">${concerns}</div>` : ""}
+    ${dims ? `<div class="dims">${dims}</div>` : ""}
+    ${(j.strengths || []).length || (j.weaknesses || []).length ? `<div class="tags">
+      ${(j.strengths || []).map(s => `<span class="tag">+ ${esc(s)}</span>`).join("")}
+      ${(j.weaknesses || []).map(w => `<span class="tag">− ${esc(w)}</span>`).join("")}
+    </div>` : ""}
+    <details><summary>description</summary><pre class="desc">${esc(j.description)}</pre></details>
+    <div class="actions">
+      <button onclick="mark(${j.id},'interested')">Interested</button>
+      <button onclick="mark(${j.id},'applied')">Applied</button>
+      <button onclick="mark(${j.id},'skipped')">Skip</button>
+    </div>
+  </article>`;
+}
+
+async function mark(id, status) {
+  const res = await fetch("/api/status", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id, status}),
+  });
+  if (!res.ok) { alert("Failed: " + (await res.json()).error); return; }
+  if ($("#all").checked) { JOBS.find(j => j.id === id).status = status; render(); }
+  else { JOBS = JOBS.filter(j => j.id !== id); render(); }
+}
+
+["#q", "#src", "#arr"].forEach(s => $(s).addEventListener("input", render));
+["#minScore", "#all"].forEach(s => $(s).addEventListener("change", load));
+load();
+</script>
+</body>
+</html>
