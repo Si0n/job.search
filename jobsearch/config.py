@@ -23,8 +23,6 @@ class Settings:
     db_name: str
     db_user: str
     db_password: str
-    telegram_token: str
-    telegram_chat_id: str
     rates: dict[str, float]
 
 
@@ -56,7 +54,5 @@ def load_settings(env_path: str = ".env") -> Settings:
         db_name=get("DB_NAME", "job_search"),
         db_user=get("DB_USER"),
         db_password=get("DB_PASSWORD"),
-        telegram_token=get("TELEGRAM_TOKEN", ""),
-        telegram_chat_id=get("TELEGRAM_CHAT_ID", ""),
         rates=dict(DEFAULT_RATES),
     )
