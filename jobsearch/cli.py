@@ -27,6 +27,24 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("filter", help="apply hard rules from profile.yaml")
     sub.add_parser("sweep", help="age out postings that stopped appearing")
 
+    sub.add_parser("run-start", help="open a scoring run").add_argument(
+        "--kind", default="score", choices=["score"])
+    finish_parser = sub.add_parser("run-finish", help="close a scoring run")
+    finish_parser.add_argument("--id", type=int, required=True)
+
+    queue_parser = sub.add_parser("queue", help="jobs awaiting scoring")
+    mode = queue_parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--unscored", action="store_true")
+    mode.add_argument("--coarse-passed", action="store_true")
+    queue_parser.add_argument("--limit", type=int, default=60)
+    queue_parser.add_argument("--min", type=int, default=6)
+
+    score_parser = sub.add_parser("score", help="record a scoring verdict")
+    score_parser.add_argument("--id", type=int, required=True)
+    score_parser.add_argument("--run-id", type=int, required=True)
+    score_parser.add_argument("--pass", type=int, choices=[1, 2], required=True, dest="pass_no")
+    score_parser.add_argument("--json", required=True, help="the scoring payload as JSON")
+
     return parser
 
 
@@ -56,6 +74,30 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.sweep(args))
+        return 0
+
+    if args.command == "run-start":
+        from jobsearch import commands
+
+        emit(commands.run_start(args))
+        return 0
+
+    if args.command == "run-finish":
+        from jobsearch import commands
+
+        emit(commands.run_finish(args))
+        return 0
+
+    if args.command == "queue":
+        from jobsearch import commands
+
+        emit(commands.queue(args))
+        return 0
+
+    if args.command == "score":
+        from jobsearch import commands
+
+        emit(commands.score(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")
