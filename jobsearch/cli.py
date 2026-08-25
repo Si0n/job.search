@@ -74,6 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--source", required=True)
     ingest_parser.add_argument("--stdin", action="store_true", default=True)
 
+    repair_parser = sub.add_parser("repair-context", help="what a repair proposal needs")
+    repair_parser.add_argument("--source", required=True)
+
     return parser
 
 
@@ -163,6 +166,12 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.ingest(args))
+        return 0
+
+    if args.command == "repair-context":
+        from jobsearch import commands
+
+        emit(commands.repair_context(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")

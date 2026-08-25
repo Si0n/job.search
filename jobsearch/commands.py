@@ -169,6 +169,17 @@ def ingest(args) -> dict:
         conn.close()
 
 
+def repair_context(args) -> dict:
+    from jobsearch import repair
+
+    settings = load_settings(args.env)
+    conn = db.connect(settings)
+    try:
+        return repair.context(conn, args.source)
+    finally:
+        conn.close()
+
+
 def serve(args) -> dict:
     from jobsearch import server
 
