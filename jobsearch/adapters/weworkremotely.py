@@ -52,9 +52,19 @@ class WeWorkRemotelyAdapter(JsonAdapter):
         # ("Gusto, Inc.: Staff Software Engineer, ..."). Selectors map both
         # `title` and `company` to that same element so the required-field
         # check (which runs before post_process) sees both populated; this
-        # splits them apart on the first colon.
-        if ":" in posting.title:
-            company, _, title = posting.title.partition(":")
+        # splits them apart on the FIRST colon, which is WWR's convention —
+        # a colon inside the company name itself (rare) will mis-split, and
+        # there is no better heuristic available without an employer list.
+        company, sep, title = posting.title.partition(":")
+        if sep:
             posting.company = company.strip()
             posting.title = title.strip()
+        else:
+            # No separator: `company` currently holds the whole fused string
+            # (both fields were mapped to the same selector so the
+            # required-field check would pass). We don't know the employer —
+            # leaving the fused string in place would put the job title where
+            # the employer belongs, corrupting the dedupe fingerprint and the
+            # scorer's company_fit dimension. Blank is honest; wrong is not.
+            posting.company = ""
         return posting

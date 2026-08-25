@@ -160,6 +160,23 @@ def test_wwr_post_process_splits_company_and_title_on_first_colon():
     assert result.title == "FULL TIME: Software Engineer Position - React and Rest"
 
 
+def test_a_title_without_the_company_separator_leaves_company_blank_not_wrong():
+    adapter = WeWorkRemotelyAdapter()
+    posting = RawPosting("1", "u", "Staff Software Engineer", "Staff Software Engineer", "d")
+    result = adapter.post_process(posting, {})
+    assert result.company == ""
+    assert result.title == "Staff Software Engineer"
+
+
+def test_commas_on_both_sides_of_the_separator_survive_the_split():
+    adapter = WeWorkRemotelyAdapter()
+    fused = "Gusto, Inc.: Staff Software Engineer, Time and Scheduling"
+    posting = RawPosting("1", "u", fused, fused, "d")
+    result = adapter.post_process(posting, {})
+    assert result.company == "Gusto, Inc."
+    assert result.title == "Staff Software Engineer, Time and Scheduling"
+
+
 WWR = pathlib.Path(__file__).parent / "fixtures" / "weworkremotely"
 
 
