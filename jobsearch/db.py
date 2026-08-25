@@ -35,13 +35,22 @@ def _applied(conn) -> set[str]:
 
 
 def migrate(conn, migrations_dir: str = "migrations") -> list[str]:
-    """Apply every unapplied .sql file in filename order. Each file is one transaction."""
+    """Apply every unapplied .sql file in filename order, statement by statement.
+
+    DDL in MySQL/InnoDB self-commits (implicit COMMIT per statement), so this is
+    NOT one transaction per file: a mid-file failure can leave earlier CREATE
+    TABLEs committed while the schema_migrations row is not. Recovery relies on
+    every CREATE TABLE using IF NOT EXISTS, so a re-run only creates what is
+    missing and then records the migration.
+    """
     done = _applied(conn)
     applied: list[str] = []
 
     for path in sorted(Path(migrations_dir).glob("*.sql")):
         if path.name in done:
             continue
+        # Naive split on ';' — migrations must contain no stored routines,
+        # triggers, or semicolons inside string/JSON literals.
         statements = [s.strip() for s in path.read_text(encoding="utf-8").split(";") if s.strip()]
         with conn.cursor() as cur:
             for statement in statements:

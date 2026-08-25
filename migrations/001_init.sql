@@ -1,9 +1,9 @@
-CREATE TABLE schema_migrations (
+CREATE TABLE IF NOT EXISTS schema_migrations (
   filename   VARCHAR(255) NOT NULL PRIMARY KEY,
   applied_at DATETIME     NOT NULL
 ) ENGINE=InnoDB;
 
-CREATE TABLE sources (
+CREATE TABLE IF NOT EXISTS sources (
   id                INT AUTO_INCREMENT PRIMARY KEY,
   name              VARCHAR(64)  NOT NULL UNIQUE,
   enabled           BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -18,7 +18,7 @@ CREATE TABLE sources (
   last_run_at       DATETIME     NULL
 ) ENGINE=InnoDB;
 
-CREATE TABLE runs (
+CREATE TABLE IF NOT EXISTS runs (
   id          INT AUTO_INCREMENT PRIMARY KEY,
   kind        ENUM('harvest','score') NOT NULL,
   source_id   INT      NULL,
@@ -31,7 +31,7 @@ CREATE TABLE runs (
   INDEX idx_runs_kind_started (kind, started_at)
 ) ENGINE=InnoDB;
 
-CREATE TABLE raw_fetches (
+CREATE TABLE IF NOT EXISTS raw_fetches (
   id            INT AUTO_INCREMENT PRIMARY KEY,
   source_id     INT          NOT NULL,
   run_id        INT          NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE raw_fetches (
   INDEX idx_raw_source_fetched (source_id, fetched_at)
 ) ENGINE=InnoDB;
 
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS jobs (
   id                 INT AUTO_INCREMENT PRIMARY KEY,
   fingerprint        CHAR(64)     NOT NULL,
   title              VARCHAR(255) NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE jobs (
   INDEX idx_jobs_triage (inactive_at, filtered_at, last_seen_at)
 ) ENGINE=InnoDB;
 
-CREATE TABLE job_sources (
+CREATE TABLE IF NOT EXISTS job_sources (
   id               INT AUTO_INCREMENT PRIMARY KEY,
   job_id           INT          NOT NULL,
   source_id        INT          NOT NULL,
@@ -95,7 +95,7 @@ CREATE TABLE job_sources (
   INDEX idx_js_job (job_id)
 ) ENGINE=InnoDB;
 
-CREATE TABLE scores (
+CREATE TABLE IF NOT EXISTS scores (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   job_id          INT      NOT NULL,
   run_id          INT      NOT NULL,
@@ -115,7 +115,7 @@ CREATE TABLE scores (
   INDEX idx_scores_job_pass (job_id, `pass`, profile_hash)
 ) ENGINE=InnoDB;
 
-CREATE TABLE notifications (
+CREATE TABLE IF NOT EXISTS notifications (
   id                  INT AUTO_INCREMENT PRIMARY KEY,
   job_id              INT         NOT NULL,
   channel             VARCHAR(32) NOT NULL,
@@ -130,7 +130,7 @@ CREATE TABLE notifications (
   INDEX idx_notif_message (telegram_message_id)
 ) ENGINE=InnoDB;
 
-CREATE TABLE applications (
+CREATE TABLE IF NOT EXISTS applications (
   job_id     INT NOT NULL PRIMARY KEY,
   status     ENUM('interested','skipped','applied','replied','rejected','interviewing','offer') NOT NULL,
   note       TEXT     NULL,
@@ -138,7 +138,7 @@ CREATE TABLE applications (
   CONSTRAINT fk_app_job FOREIGN KEY (job_id) REFERENCES jobs(id)
 ) ENGINE=InnoDB;
 
-INSERT INTO sources (name, enabled, fetch_mode, priority, base_url) VALUES
+INSERT IGNORE INTO sources (name, enabled, fetch_mode, priority, base_url) VALUES
   ('djinni',         TRUE, 'http-html', 10, 'https://djinni.co'),
   ('dou',            TRUE, 'http-html', 20, 'https://jobs.dou.ua'),
   ('remoteok',       TRUE, 'http-json', 30, 'https://remoteok.com'),
