@@ -54,3 +54,25 @@ def test_monthly_eur_is_none_when_absent():
 
 def test_monthly_eur_is_none_for_unknown_currency():
     assert to_monthly_eur(Salary(5000, 5000, "XYZ", "month", "unknown", "posting"), DEFAULT_RATES) is None
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("5+ years experience, €80,000/year",         Salary(80000, 80000, "EUR", "year", "unknown", "posting")),
+    ("Team of 12 engineers. Salary €7,000/month", Salary(7000, 7000, "EUR", "month", "unknown", "posting")),
+    ("€6,000/month, 25 days holiday",             Salary(6000, 6000, "EUR", "month", "unknown", "posting")),
+    ("Senior dev, 3-5 years, $90k-$110k",         Salary(90000, 110000, "USD", "year", "unknown", "posting")),
+])
+def test_parse_ignores_digits_unrelated_to_the_money_expression(raw, expected):
+    # salary_raw is scraped free text — years of experience, headcounts, and PTO
+    # days sit right next to the real figure. Only digits anchored to a currency
+    # marker may enter the parsed range.
+    assert parse(raw) == expected
+
+
+def test_weak_currency_threshold_is_a_documented_approximation():
+    # Below the threshold with no period marker, UAH reads as monthly. A genuine
+    # annual figure in this window is overstated ~12x — accepted, because the
+    # failure admits a bad job rather than deleting a good one.
+    assert parse("UAH 800,000").period == "month"
+    assert parse("UAH 950,000").period == "year"
+    assert parse("UAH 800,000/year").period == "year"   # explicit marker always wins
