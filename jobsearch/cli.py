@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     harvest_parser.add_argument("--source", action="append", dest="sources")
     harvest_parser.add_argument("--dry-run", action="store_true")
 
+    sub.add_parser("filter", help="apply hard rules from profile.yaml")
+
     return parser
 
 
@@ -41,6 +43,12 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.harvest(args))
+        return 0
+
+    if args.command == "filter":
+        from jobsearch import commands
+
+        emit(commands.filter_jobs(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")

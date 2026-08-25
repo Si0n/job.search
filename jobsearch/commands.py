@@ -23,3 +23,16 @@ def harvest(args) -> dict:
         return harvest_mod.run(conn, settings, getattr(args, "sources", None), args.dry_run)
     finally:
         conn.close()
+
+
+def filter_jobs(args) -> dict:
+    from jobsearch import filters
+    from jobsearch.profile import load_profile
+
+    settings = load_settings(args.env)
+    profile = load_profile(args.profile)
+    conn = db.connect(settings)
+    try:
+        return filters.apply(conn, profile)
+    finally:
+        conn.close()
