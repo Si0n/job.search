@@ -5,7 +5,7 @@ import json
 SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£", "PLN": "zł", "UAH": "₴"}
 
 _JOBS_SQL = """
-SELECT j.id, j.title, j.company, j.location, j.arrangement, j.employment_type,
+SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.arrangement, j.employment_type,
        j.salary_min, j.salary_max, j.salary_currency, j.salary_period,
        j.salary_source, j.salary_monthly_eur, j.first_seen_at, j.canonical_source_id,
        sc.score, sc.red_flag_penalty, sc.dimensions, sc.hard_concerns,
@@ -102,6 +102,17 @@ def build_view(job_rows: list[dict], posting_rows: list[dict]) -> list[dict]:
     for posting in posting_rows:
         by_job.setdefault(posting["job_id"], []).append(posting)
 
+    # A fingerprint appearing on two different canonical jobs means the same role
+    # was found twice and the cross-source merge gate refused it — usually because
+    # one board truncates its listing snippet harder than the other, which drags
+    # the Jaccard similarity below the threshold. Flagging it here does not fix the
+    # merge; it stops the owner applying to the same job twice.
+    fingerprint_counts: dict[str, int] = {}
+    for job in job_rows:
+        fp = job.get("fingerprint")
+        if fp:
+            fingerprint_counts[fp] = fingerprint_counts.get(fp, 0) + 1
+
     cards = []
     for job in job_rows:
         postings = by_job.get(job["id"], [])
@@ -112,6 +123,7 @@ def build_view(job_rows: list[dict], posting_rows: list[dict]) -> list[dict]:
 
         cards.append({
             "id": job["id"],
+            "is_duplicate": fingerprint_counts.get(job.get("fingerprint") or "", 0) > 1,
             "title": job["title"],
             "company": job["company"],
             "location": job.get("location") or "",

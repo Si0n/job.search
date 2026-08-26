@@ -104,3 +104,30 @@ def test_salary_formatting(row, expected_text, stated):
     result = format_salary(row)
     assert result["text"] == expected_text
     assert result["stated"] is stated
+
+
+def test_jobs_sharing_a_fingerprint_are_flagged_as_duplicates():
+    # Two rows, same fingerprint, different ids: the same role that failed the
+    # cross-source merge gate. The page must be able to say so.
+    a = {**JOB, "id": 1, "fingerprint": "abc123"}
+    b = {**JOB, "id": 2, "fingerprint": "abc123"}
+    postings = [{**POSTINGS[0], "job_id": 1}, {**POSTINGS[0], "job_id": 2}]
+    view = build_view([a, b], postings)
+    assert all(c["is_duplicate"] for c in view)
+
+
+def test_a_job_with_a_unique_fingerprint_is_not_flagged():
+    a = {**JOB, "id": 1, "fingerprint": "abc123"}
+    b = {**JOB, "id": 2, "fingerprint": "different"}
+    postings = [{**POSTINGS[0], "job_id": 1}, {**POSTINGS[0], "job_id": 2}]
+    view = build_view([a, b], postings)
+    assert not any(c["is_duplicate"] for c in view)
+
+
+def test_a_missing_fingerprint_never_flags_a_duplicate():
+    # Defensive: a NULL fingerprint must not make every such job "duplicate".
+    a = {**JOB, "id": 1, "fingerprint": None}
+    b = {**JOB, "id": 2, "fingerprint": None}
+    postings = [{**POSTINGS[0], "job_id": 1}, {**POSTINGS[0], "job_id": 2}]
+    view = build_view([a, b], postings)
+    assert not any(c["is_duplicate"] for c in view)
