@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from jobsearch import dashboard, db, store
+from jobsearch import dashboard, db, drafts, store
 from jobsearch.profile import load_profile
 from jobsearch.models import APPLICATION_STATUSES
 
@@ -58,9 +58,10 @@ def _make_handler(settings, port):
     # Loaded once at startup, not per request: it never changes while the server
     # runs, and a bad profile should fail loudly at boot rather than on a fetch.
     try:
-        PROFILE = load_profile().data
+        _profile = load_profile()
+        PROFILE, PROFILE_HASH = _profile.data, _profile.hash
     except Exception:
-        PROFILE = None
+        PROFILE, PROFILE_HASH = None, ""
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload: dict | list, content_type="application/json"):
@@ -105,7 +106,8 @@ def _make_handler(settings, port):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/status":
+            route = urlparse(self.path).path
+            if route not in ("/api/status", "/api/draft-note"):
                 self._send(404, {"error": "not found"})
                 return
 
@@ -132,8 +134,28 @@ def _make_handler(settings, port):
                 self._send(413, {"error": "body too large"})
                 return
 
+            raw = self.rfile.read(length)
+
+            if route == "/api/draft-note":
+                try:
+                    job_id, note = drafts.parse_note(raw)
+                except ValueError as exc:
+                    self._send(400, {"error": str(exc)})
+                    return
+                conn = db.connect(settings)
+                try:
+                    result = drafts.set_note(conn, job_id, note, PROFILE_HASH)
+                except Exception as exc:
+                    traceback.print_exc(file=sys.stderr)
+                    self._send(400, {"error": f"could not save note ({type(exc).__name__})"})
+                    return
+                finally:
+                    conn.close()
+                self._send(200, result)
+                return
+
             try:
-                job_id, status, note = parse_status_request(self.rfile.read(length))
+                job_id, status, note = parse_status_request(raw)
             except ValueError as exc:
                 self._send(400, {"error": str(exc)})
                 return

@@ -63,3 +63,18 @@ def test_malformed_json_is_rejected():
 def test_an_oversized_note_is_rejected_rather_than_truncated_silently():
     with pytest.raises(ValueError, match="note"):
         parse_status_request(body(id=1, status="applied", note="x" * 5000))
+
+
+# --- the rewrite-note endpoint carries the same guards as /api/status ---
+
+from jobsearch.drafts import parse_note
+
+
+def test_note_endpoint_rejects_a_boolean_id_like_the_status_endpoint():
+    with pytest.raises(ValueError, match="id"):
+        parse_note(body(id=True, note="hi"))
+
+
+def test_note_endpoint_rejects_malformed_json():
+    with pytest.raises(ValueError):
+        parse_note(b"{not json")

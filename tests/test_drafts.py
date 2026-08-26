@@ -47,3 +47,33 @@ def test_malformed_json_is_rejected():
 def test_an_overlong_block_is_rejected_rather_than_truncated():
     with pytest.raises(ValueError, match="too long"):
         parse_draft(body(**{**FULL, "cover_letter": "x" * 9000}))
+
+
+# --- rewrite instructions from the dashboard ---
+
+from jobsearch.drafts import MAX_NOTE, parse_note
+
+
+def test_a_note_parses_and_is_trimmed():
+    assert parse_note(body(id=7, note="  shorter please  ")) == (7, "shorter please")
+
+
+def test_an_empty_note_clears_rather_than_storing_whitespace():
+    assert parse_note(body(id=7, note="   ")) == (7, None)
+    assert parse_note(body(id=7, note=None)) == (7, None)
+
+
+def test_a_bad_job_id_is_rejected():
+    for bad in ("x", None, True):
+        with pytest.raises(ValueError, match="id"):
+            parse_note(body(id=bad, note="hi"))
+
+
+def test_an_overlong_note_is_rejected_rather_than_truncated():
+    with pytest.raises(ValueError, match="too long"):
+        parse_note(body(id=7, note="x" * (MAX_NOTE + 1)))
+
+
+def test_a_non_string_note_is_rejected():
+    with pytest.raises(ValueError, match="note"):
+        parse_note(body(id=7, note=42))

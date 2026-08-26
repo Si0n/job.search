@@ -43,6 +43,7 @@ SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.arrangement, j.emp
        sc.strengths, sc.weaknesses, sc.verdict,
        a.status,
        d.cover_letter, d.email AS draft_email, d.why_fit,
+       d.note AS draft_note, d.applied_note,
        d.profile_hash AS draft_hash
 FROM jobs j
 LEFT JOIN scores sc      ON sc.id = j.latest_score_id
@@ -268,8 +269,10 @@ def build_view(job_rows: list[dict], posting_rows: list[dict],
             "id": job["id"],
             "draft": ({"cover_letter": job["cover_letter"], "email": job["draft_email"],
                        "why_fit": job["why_fit"],
+                       "applied_note": job.get("applied_note"),
                        "stale": bool(current_hash and job.get("draft_hash") != current_hash)}
                       if job.get("cover_letter") else None),
+            "pending_note": job.get("draft_note"),
             "is_duplicate": fingerprint_counts.get(job.get("fingerprint") or "", 0) > 1,
             "title": job["title"],
             "company": job["company"],

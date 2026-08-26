@@ -61,6 +61,29 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;
   border-color:color-mix(in srgb,var(--warn) 55%,transparent);
   background:color-mix(in srgb,var(--warn) 12%,transparent)}
 .lang.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+#backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;
+  transition:opacity .18s;z-index:8}
+#backdrop.on{opacity:1;pointer-events:auto}
+#panel{position:fixed;top:0;right:0;height:100%;width:min(560px,46vw);z-index:9;
+  background:var(--card);border-left:1px solid var(--line);
+  transform:translateX(100%);transition:transform .2s ease;
+  display:flex;flex-direction:column;overflow:hidden}
+#panel.open{transform:none}
+@media (max-width:820px){#panel{width:100%}}
+.p-head{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;
+  align-items:flex-start}
+.p-head .t{font-weight:650;font-size:14.5px;flex:1;line-height:1.35}
+.p-body{padding:14px 16px;overflow:auto;flex:1}
+.p-note{padding:12px 16px;border-top:1px solid var(--line);background:var(--bg)}
+.p-note textarea{width:100%;background:var(--card);color:var(--ink);font:inherit;
+  font-size:13px;border:1px solid var(--line);border-radius:7px;padding:8px;resize:vertical;
+  min-height:56px}
+.p-note .row{display:flex;gap:8px;align-items:center;margin-top:7px}
+.p-note .hint{font-size:11.5px;color:var(--muted);flex:1}
+.applied{font-size:11.5px;color:var(--muted);border-left:2px solid var(--line);
+  padding-left:8px;margin-bottom:12px;font-style:italic}
+.cmd{font-family:ui-monospace,monospace;font-size:12px;background:var(--bg);
+  border:1px solid var(--line);border-radius:6px;padding:6px 8px;display:inline-block}
 .draft .block{margin-top:10px}
 .blk-h{display:flex;gap:8px;align-items:center;font-size:11.5px;color:var(--muted);
   text-transform:uppercase;letter-spacing:.04em}
@@ -133,10 +156,25 @@ pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
     <label><input type="checkbox" id="all"> include triaged</label>
     <span id="count"></span>
     <span style="font-size:12px;color:var(--muted)"><kbd>j</kbd><kbd>k</kbd> move
-      <kbd>i</kbd>nterested <kbd>a</kbd>pplied <kbd>s</kbd>kip <kbd>o</kbd>pen</span>
+      <kbd>i</kbd>nterested <kbd>a</kbd>pplied <kbd>s</kbd>kip <kbd>o</kbd>pen <kbd>d</kbd>raft</span>
   </div>
 </header>
 <main id="list"></main>
+<div id="backdrop"></div>
+<aside id="panel" aria-hidden="true">
+  <div class="p-head">
+    <div class="t" id="p-title"></div>
+    <button id="p-close" title="Escape">close</button>
+  </div>
+  <div class="p-body" id="p-body"></div>
+  <div class="p-note">
+    <textarea id="p-prompt" placeholder="Change something — e.g. shorter, lead with the KYC work, less formal"></textarea>
+    <div class="row">
+      <button id="p-refresh">save instruction</button>
+      <span class="hint" id="p-hint"></span>
+    </div>
+  </div>
+</aside>
 <script>
 let JOBS = [];
 let SHOWN = [];
@@ -188,6 +226,8 @@ function render() {
   if (sel >= shown.length) sel = Math.max(0, shown.length - 1);
   const cards = $("#list").querySelectorAll("article.card");
   cards.forEach((c, i) => c.classList.toggle("sel", i === sel && shown.length > 0));
+  $("#list").querySelectorAll("button.open-draft").forEach(b =>
+    b.addEventListener("click", () => openPanel(Number(b.dataset.job))));
   $("#list").querySelectorAll("button.cp").forEach(b =>
     b.addEventListener("click", () => {
       navigator.clipboard?.writeText(b.dataset.copy);
@@ -248,16 +288,12 @@ function card(j) {
       ${(j.strengths || []).map(s => `<span class="tag">+ ${esc(s)}</span>`).join("")}
       ${(j.weaknesses || []).map(w => `<span class="tag">− ${esc(w)}</span>`).join("")}
     </div>` : ""}
-    ${j.draft ? `<details class="draft"><summary>application draft${j.draft.stale ? " (written before your profile changed)" : ""}</summary>
-      ${["cover_letter","email","why_fit"].map(k => `<div class="block">
-        <div class="blk-h">${esc(k.replace(/_/g," "))}<button class="cp" data-copy="${esc(j.draft[k])}">copy</button></div>
-        <pre class="desc">${esc(j.draft[k])}</pre></div>`).join("")}
-    </details>` : ""}
     <details><summary>description</summary><pre class="desc">${esc(j.description)}</pre></details>
     <div class="actions">
       <button data-id="${j.id}" data-status="interested">Interested</button>
       <button data-id="${j.id}" data-status="applied">Applied</button>
       <button data-id="${j.id}" data-status="skipped">Skip</button>
+      <button class="open-draft" data-job="${j.id}">${j.draft ? "application ▸" : "draft…"}</button>
     </div>
   </article>`;
 }
@@ -273,12 +309,77 @@ async function mark(id, status) {
   else { JOBS = JOBS.filter(j => j.id !== id); render(); }
 }
 
+let panelJob = null;
+
+function renderPanel(j) {
+  panelJob = j || null;
+  if (!j) return;
+  $("#p-title").textContent = `${j.title} — ${j.company}`;
+  const d = j.draft;
+  $("#p-body").innerHTML = d
+    ? (d.stale ? `<div class="applied">Written before your profile changed — worth regenerating.</div>` : "")
+      + (d.applied_note ? `<div class="applied">written with: “${esc(d.applied_note)}”</div>` : "")
+      + ["cover_letter", "email", "why_fit"].map(k => `<div class="block">
+          <div class="blk-h">${esc(k.replace(/_/g, " "))}<button class="cp" data-copy="${esc(d[k])}">copy</button></div>
+          <pre class="desc">${esc(d[k])}</pre></div>`).join("")
+    : `<p style="color:var(--muted)">No draft yet. Run this in Claude Code:</p>
+       <p><span class="cmd">/draft ${j.id}</span></p>
+       <p style="color:var(--muted);font-size:13px">You can leave an instruction below first —
+       the run will follow it.</p>`;
+  $("#p-prompt").value = j.pending_note || "";
+  $("#p-hint").textContent = j.pending_note
+    ? `saved — run /draft ${j.id} to apply it` : "";
+  $("#p-body").querySelectorAll("button.cp").forEach(b =>
+    b.addEventListener("click", () => {
+      navigator.clipboard?.writeText(b.dataset.copy);
+      b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1200);
+    }));
+}
+
+function openPanel(id) {
+  const j = SHOWN.find(x => x.id === id) || JOBS.find(x => x.id === id);
+  if (!j) return;
+  renderPanel(j);
+  $("#panel").classList.add("open");
+  $("#panel").setAttribute("aria-hidden", "false");
+  $("#backdrop").classList.add("on");
+}
+
+function closePanel() {
+  $("#panel").classList.remove("open");
+  $("#panel").setAttribute("aria-hidden", "true");
+  $("#backdrop").classList.remove("on");
+  panelJob = null;
+}
+
+$("#p-close").addEventListener("click", closePanel);
+$("#backdrop").addEventListener("click", closePanel);
+
+$("#p-refresh").addEventListener("click", async () => {
+  if (!panelJob) return;
+  const note = $("#p-prompt").value;
+  const res = await fetch("/api/draft-note", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: panelJob.id, note}),
+  });
+  if (!res.ok) { $("#p-hint").textContent = "failed: " + (await res.json()).error; return; }
+  // Keep the local copy in step so reopening the panel before the next load
+  // shows what was actually saved rather than a stale blank.
+  panelJob.pending_note = note.trim() || null;
+  $("#p-hint").textContent = panelJob.pending_note
+    ? `saved — run /draft ${panelJob.id} to apply it` : "cleared";
+});
+
 function moveSel(delta) {
   if (!SHOWN.length) return;
   sel = Math.min(SHOWN.length - 1, Math.max(0, sel + delta));
   const cards = $("#list").querySelectorAll("article.card");
   cards.forEach((c, i) => c.classList.toggle("sel", i === sel));
   cards[sel]?.scrollIntoView({block: "nearest", behavior: "smooth"});
+  // The panel follows the selection rather than pinning to one job, so j/k
+  // walks the queue with the drafts open.
+  if ($("#panel").classList.contains("open")) renderPanel(SHOWN[sel]);
 }
 
 document.addEventListener("keydown", e => {
@@ -288,6 +389,8 @@ document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const job = SHOWN[sel];
   const acts = {i: "interested", a: "applied", s: "skipped"};
+  if (e.key === "Escape") { closePanel(); return; }
+  if (e.key === "d" && job) { e.preventDefault(); openPanel(job.id); return; }
   if (e.key === "j") { e.preventDefault(); moveSel(1); }
   else if (e.key === "k") { e.preventDefault(); moveSel(-1); }
   else if (e.key === "o" && job) { e.preventDefault(); window.open(job.sources[0]?.url, "_blank", "noopener"); }
