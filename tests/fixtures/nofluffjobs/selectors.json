@@ -1,0 +1,1 @@
+{"root": "postings", "skip_first": false, "fields": {"external_id": "reference", "url": "url", "title": "title", "company": "name", "description": "description", "employment_hint": "category"}}

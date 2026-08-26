@@ -1,0 +1,1 @@
+{"root": "jobs", "skip_first": false, "fields": {"external_id": "id", "url": "url", "title": "jobTitle", "company": "companyName", "location": "jobGeo", "description": "jobDescription", "employment_hint": "jobLevel"}}

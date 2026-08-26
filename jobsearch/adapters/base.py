@@ -42,6 +42,16 @@ class Adapter(ABC):
     def parse(self, raw: RawFetch, selectors: dict) -> ParseResult: ...
 
     def _get(self, url: str, conditional: dict | None) -> RawFetch:
+        return self._request("GET", url, conditional)
+
+    def _post(self, url: str, conditional: dict | None, json_body: dict) -> RawFetch:
+        """POST a JSON search body. Some boards expose their catalogue only this
+        way; conditional headers are still sent but such endpoints do not
+        answer 304, so every run fetches in full."""
+        return self._request("POST", url, conditional, json_body)
+
+    def _request(self, method: str, url: str, conditional: dict | None,
+                 json_body: dict | None = None) -> RawFetch:
         headers = {"User-Agent": USER_AGENT}
         if conditional:
             if conditional.get("etag"):
@@ -52,8 +62,15 @@ class Adapter(ABC):
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                response = httpx.get(url, headers=headers, timeout=TIMEOUT, follow_redirects=True)
-                response.raise_for_status()
+                response = httpx.request(method, url, headers=headers, json=json_body,
+                                         timeout=TIMEOUT, follow_redirects=True)
+                # 304 is the conditional request working, not a failure. httpx
+                # classes it as a redirect, so raise_for_status() rejects it and
+                # the whole not-modified path below — which exists precisely so
+                # an unchanged source is not mistaken for a vanished one — never
+                # runs. Only servers that honour If-None-Match ever reach here.
+                if response.status_code != 304:
+                    response.raise_for_status()
                 break
             except httpx.HTTPError as exc:
                 last_error = exc
@@ -205,6 +222,50 @@ def _dig(payload, path: str):
     return current
 
 
+_SALARY_PERIODS = {"yearly": "year", "annual": "year", "annually": "year",
+                   "monthly": "month", "weekly": "week", "daily": "day",
+                   "hourly": "hour"}
+
+
+def _plain_amount(value) -> str:
+    """Render a bound without a trailing ".0".
+
+    JSON boards publish these as floats. "23520.0" is not a two-digit fraction,
+    so the decimal rule below leaves it alone and the separator strip glues the
+    zero on: 235200, ten times the real figure. The inflated number then also
+    clears the magnitude threshold and flips the period from month to year.
+    """
+    number = float(value)
+    return str(int(number)) if number.is_integer() else f"{number:.2f}"
+
+
+def salary_range_text(low, high, currency: str = "$", period: str | None = None) -> str | None:
+    """Render a board's numeric salary fields as the free text salary.parse reads.
+
+    Boards publish salary as separate numbers; salary.parse takes one string.
+    Three conversions here are load-bearing, and each fails silently — the job
+    is lost, not flagged — if it is dropped:
+
+    - A currency CODE needs a space. "USD 78000" parses; "USD78000" matches
+      nothing and the salary is read as absent.
+    - salary.parse knows the stems "month" and "hour" but not "monthly" or
+      "hourly", and falls back to year. A monthly figure read as annual lands
+      far below the salary floor, so the filter drops a job that in fact paid
+      twelve times what was recorded.
+    - A falsy bound means "not stated" and must yield no text at all. A zero
+      figure reads as a real salary under the floor and loses the job the
+      same way.
+    """
+    low, high = low or None, high or None
+    if not low and not high:
+        return None
+    unit = f"/{_SALARY_PERIODS.get(period.lower(), period.lower())}" if period else ""
+    money = f"{currency} " if currency and currency[-1].isalpha() else (currency or "")
+    if low and high and low != high:
+        return f"{money}{_plain_amount(low)} - {money}{_plain_amount(high)}{unit}"
+    return f"{money}{_plain_amount(low or high)}{unit}"
+
+
 class JsonAdapter(Adapter):
     """Path-driven parsing shared by every http-json source."""
 
@@ -281,3 +342,43 @@ class JsonAdapter(Adapter):
         if not postings:
             return ParseResult("broken", [], diagnostics)
         return ParseResult("ok", postings, diagnostics)
+
+
+def rss_to_items(text: str) -> list[dict]:
+    """RSS <item> elements to the list-of-dicts shape JsonAdapter parses.
+
+    Namespaces are stripped from tag names, so a field published as
+    `job:salary` is reachable from selector JSON as plain `salary`. Without
+    that, a prefixed field is silently invisible — LaraJobs puts salary,
+    location and job_type behind a `job:` prefix, and they read as empty.
+
+    Uses defusedxml: this is third-party XML fetched on a schedule, and the
+    stdlib parser expands entities.
+    """
+    from defusedxml import ElementTree
+
+    items = []
+    root = ElementTree.fromstring(text)
+    for item in root.iterfind(".//item"):
+        entry = {child.tag.split("}")[-1]: (child.text or "") for child in item}
+        entry["guid"] = entry.get("guid") or entry.get("link", "")
+        items.append(entry)
+    return items
+
+
+class RssAdapter(JsonAdapter):
+    """A feed source whose transport is RSS. Parsing stays JsonAdapter's — the
+    conversion happens in fetch, so everything downstream sees one shape."""
+
+    def fetch(self, query: dict, conditional: dict | None = None) -> RawFetch:
+        raw = self._get(self.build_url(query or {}), conditional)
+        if raw.http_status == 304:
+            return raw
+        return RawFetch(
+            source_name=self.name,
+            body=json.dumps(rss_to_items(raw.text())).encode("utf-8"),
+            http_status=raw.http_status,
+            fetched_at=raw.fetched_at,
+            etag=raw.etag,
+            last_modified=raw.last_modified,
+        )

@@ -3,6 +3,10 @@ from __future__ import annotations
 from jobsearch.adapters.base import Adapter
 from jobsearch.adapters.djinni import DjinniAdapter
 from jobsearch.adapters.dou import DouAdapter
+from jobsearch.adapters.jobicy import JobicyAdapter
+from jobsearch.adapters.larajobs import LaraJobsAdapter
+from jobsearch.adapters.nofluffjobs import NoFluffJobsAdapter
+from jobsearch.adapters.remotive import RemotiveAdapter
 from jobsearch.adapters.remoteok import RemoteOkAdapter
 from jobsearch.adapters.weworkremotely import WeWorkRemotelyAdapter
 
@@ -11,6 +15,10 @@ ADAPTERS: dict[str, type[Adapter]] = {
     DouAdapter.name: DouAdapter,
     RemoteOkAdapter.name: RemoteOkAdapter,
     WeWorkRemotelyAdapter.name: WeWorkRemotelyAdapter,
+    LaraJobsAdapter.name: LaraJobsAdapter,
+    JobicyAdapter.name: JobicyAdapter,
+    NoFluffJobsAdapter.name: NoFluffJobsAdapter,
+    RemotiveAdapter.name: RemotiveAdapter,
 }
 
 

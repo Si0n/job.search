@@ -6,8 +6,9 @@ from dataclasses import dataclass
 WORKING_DAYS_PER_MONTH = 21
 WORKING_HOURS_PER_MONTH = 168
 
-_CURRENCY_SYMBOLS = {"€": "EUR", "$": "USD", "£": "GBP", "₴": "UAH", "zł": "PLN"}
-_CURRENCY_CODES = ("EUR", "USD", "GBP", "PLN", "UAH", "CHF")
+_CURRENCY_SYMBOLS = {"€": "EUR", "$": "USD", "£": "GBP", "₴": "UAH", "zł": "PLN",
+                     "₪": "ILS"}
+_CURRENCY_CODES = ("EUR", "USD", "GBP", "PLN", "UAH", "CHF", "CAD", "ILS")
 
 _PERIOD_PATTERNS = (
     ("hour", re.compile(r"/\s*(hour|hr|h)\b|\bper\s+hour\b", re.I)),
@@ -22,7 +23,7 @@ _AMOUNT = re.compile(r"(\d[\d\s,._]*)\s*(k)?", re.I)
 # Same shape as _AMOUNT, but non-capturing — used only to bound the money
 # expression below, not to read the numbers out (that's still _AMOUNT's job).
 _MONEY_ATOM = r"\d[\d\s,._]*(?:\s*k)?"
-_CURRENCY_MARK = r"(?:€|\$|£|₴|zł|\b(?:EUR|USD|GBP|PLN|UAH|CHF)\b)"
+_CURRENCY_MARK = r"(?:€|\$|£|₴|₪|zł|\b(?:EUR|USD|GBP|PLN|UAH|CHF|CAD|ILS)\b)"
 
 # Range separators seen in scraped postings: ASCII hyphen (-, U+002D), en dash
 # (–), em dash (—), minus sign (−), or the word "to" with
@@ -60,7 +61,11 @@ _FROM = re.compile(r"\b(from|starting|від|от)\b", re.I)
 # mode admits a bad-looking job for the owner to see and dismiss, rather than
 # silently deleting a good one, which is the asymmetry this module is tuned for.
 _YEAR_MAGNITUDE_THRESHOLD = 20000
-_WEAK_CURRENCY_THRESHOLD = {"PLN": 90000, "UAH": 900000}
+# ILS runs about four units to the EUR, so a real Israeli MONTHLY salary
+# clears the flat 20,000 cutoff and would be read as annual — twelve times
+# understated, which puts it under the floor and deletes the job. CAD sits
+# in the same magnitude band as USD/EUR and needs no adjustment.
+_WEAK_CURRENCY_THRESHOLD = {"PLN": 90000, "UAH": 900000, "ILS": 80000}
 
 
 @dataclass(frozen=True)
@@ -91,7 +96,14 @@ def _amounts(text: str) -> list[int]:
     found: list[int] = []
     for expr in _MONEY_EXPR.finditer(text):
         for match in _AMOUNT.finditer(expr.group(0)):
-            digits = re.sub(r"[\s,._]", "", match.group(1))
+            # A trailing separator followed by exactly two digits is a
+            # decimal fraction ("USD $134,450.00", "1.234,56"), never a
+            # thousands group — those are always three digits. Stripping it
+            # with the separators instead would glue the cents onto the
+            # amount and overstate it a hundredfold, which reads as a
+            # plausible-looking salary rather than as an error.
+            digits = re.sub(r"[.,]\d{2}$", "", match.group(1).strip())
+            digits = re.sub(r"[\s,._]", "", digits)
             if not digits:
                 continue
             value = int(digits)

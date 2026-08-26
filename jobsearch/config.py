@@ -13,6 +13,8 @@ DEFAULT_RATES: dict[str, float] = {
     "PLN": 0.23,
     "UAH": 0.022,
     "CHF": 1.05,
+    "CAD": 0.66,
+    "ILS": 0.25,
 }
 
 

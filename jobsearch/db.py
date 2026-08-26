@@ -50,7 +50,10 @@ def migrate(conn, migrations_dir: str = "migrations") -> list[str]:
         if path.name in done:
             continue
         # Naive split on ';' — migrations must contain no stored routines,
-        # triggers, or semicolons inside string/JSON literals.
+        # triggers, or semicolons inside string/JSON literals or comments.
+        # A semicolon in a comment splits mid-sentence and fails loudly here,
+        # which is the intended trade: stripping `--` lines first would risk
+        # silently mangling a literal that legitimately contains `--`.
         statements = [s.strip() for s in path.read_text(encoding="utf-8").split(";") if s.strip()]
         with conn.cursor() as cur:
             for statement in statements:

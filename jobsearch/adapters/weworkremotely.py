@@ -4,11 +4,11 @@ import json
 
 from defusedxml import ElementTree
 
-from jobsearch.adapters.base import JsonAdapter
+from jobsearch.adapters.base import RssAdapter
 from jobsearch.models import RawFetch
 
 
-class WeWorkRemotelyAdapter(JsonAdapter):
+class WeWorkRemotelyAdapter(RssAdapter):
     """RSS in, JSON-shaped out.
 
     Converting in fetch keeps one parse implementation for every feed source.
@@ -23,28 +23,6 @@ class WeWorkRemotelyAdapter(JsonAdapter):
         category = query.get("category", "remote-programming-jobs")
         return f"{self.base_url}/categories/{category}.rss"
 
-    def fetch(self, query: dict, conditional: dict | None = None) -> RawFetch:
-        raw = self._get(self.build_url(query or {}), conditional)
-        if raw.http_status == 304:
-            # Body is empty by definition of 304 — ElementTree.fromstring("")
-            # would raise. Hand the untouched 304 straight back so harvest's
-            # not-modified branch (which never reaches parse()) can see it.
-            return raw
-        items = []
-        root = ElementTree.fromstring(raw.text())
-        for item in root.iterfind(".//item"):
-            entry = {child.tag.split("}")[-1]: (child.text or "") for child in item}
-            entry["guid"] = entry.get("guid") or entry.get("link", "")
-            items.append(entry)
-
-        return RawFetch(
-            source_name=self.name,
-            body=json.dumps(items).encode("utf-8"),
-            http_status=raw.http_status,
-            fetched_at=raw.fetched_at,
-            etag=raw.etag,
-            last_modified=raw.last_modified,
-        )
 
     def post_process(self, posting, item):
         # weworkremotely.com is a remote-only board by definition — every

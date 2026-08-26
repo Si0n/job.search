@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jobsearch.adapters.base import JsonAdapter
+from jobsearch.adapters.base import JsonAdapter, salary_range_text
 
 
 class RemoteOkAdapter(JsonAdapter):
@@ -18,14 +18,8 @@ class RemoteOkAdapter(JsonAdapter):
         # value sits in a document, and has no way to express a constant.
         posting.arrangement_hint = "remote"
 
-        # salary_min/salary_max are separate numeric fields; salary.parse()
-        # takes one free-text string. RemoteOK uses 0 (or an absent key) to
-        # mean "not stated" — that must produce no salary_raw at all, not a
-        # "$0" string, since a zero salary would fail the owner's filters.
-        low = item.get("salary_min") or None
-        high = item.get("salary_max") or None
-        if low and high:
-            posting.salary_raw = f"${low}" if low == high else f"${low} - ${high}"
-        elif low or high:
-            posting.salary_raw = f"${low or high}"
+        # RemoteOK uses 0 (or an absent key) to mean "not stated", and states no
+        # currency or period of its own — the figures are US dollars per year.
+        posting.salary_raw = salary_range_text(item.get("salary_min"),
+                                               item.get("salary_max"))
         return posting
