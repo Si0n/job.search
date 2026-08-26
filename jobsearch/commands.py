@@ -81,7 +81,7 @@ def queue(args) -> dict:
     conn = db.connect(settings)
     try:
         if args.unscored:
-            jobs = scoring.unscored(conn, profile, args.limit)
+            jobs = scoring.unscored(conn, profile, args.min, args.limit)
             mode = "unscored"
         else:
             jobs = scoring.coarse_passed(conn, profile, args.min, args.limit)

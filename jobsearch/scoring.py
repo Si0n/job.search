@@ -41,16 +41,30 @@ def _shape(rows: list[dict], truncate: int | None) -> list[dict]:
     return shaped
 
 
-def unscored(conn, profile, limit: int = 60) -> list[dict]:
-    """Jobs with no pass-2 score under the current profile hash.
+def unscored(conn, profile, minimum: int = 6, limit: int = 60) -> list[dict]:
+    """Jobs still awaiting a coarse pass under the current profile hash.
 
     Keying on the hash means a profile edit re-queues everything automatically,
-    and a run that dies between passes resumes rather than stranding postings.
+    and a run that dies between passes resumes rather than stranding postings —
+    a job that got a passing pass-1 score but no pass 2 must come back.
+
+    A job REJECTED at pass 1 must not. Testing only for a missing pass-2 row
+    cannot tell the two apart, so every triaged-and-discarded job returned in
+    every later queue: 44 of one 60-job batch were reruns of coarse scores
+    already recorded, crowding out jobs that had never been looked at.
     """
     with conn.cursor() as cur:
         cur.execute(
-            _BASE_SELECT + _NO_PASS + " GROUP BY j.id ORDER BY j.first_seen_at DESC LIMIT %s",
-            (2, profile.hash, limit),
+            _BASE_SELECT + _NO_PASS +
+            """
+              AND NOT EXISTS (
+                SELECT 1 FROM scores sc1
+                WHERE sc1.job_id = j.id AND sc1.`pass` = 1
+                  AND sc1.profile_hash = %s AND sc1.score < %s
+              )
+            """ +
+            " GROUP BY j.id ORDER BY j.first_seen_at DESC LIMIT %s",
+            (2, profile.hash, profile.hash, minimum, limit),
         )
         return _shape(list(cur.fetchall()), COARSE_CHARS)
 
