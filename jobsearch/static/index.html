@@ -37,6 +37,9 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;
 .s-mid{background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn)}
 .s-lo{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
 .title{font-weight:650;font-size:15.5px}
+.title .tlink{color:inherit;text-decoration:none;border-bottom:1px solid transparent}
+.title .tlink:hover{border-bottom-color:currentColor}
+.p-links{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
 .meta{color:var(--muted);font-size:13px;margin-top:2px}
 .verdict{margin:10px 0 0}
 .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
@@ -164,6 +167,7 @@ pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
 <aside id="panel" aria-hidden="true">
   <div class="p-head">
     <div class="t" id="p-title"></div>
+    <div class="p-links" id="p-links"></div>
     <button id="p-close" title="Escape">close</button>
   </div>
   <div class="p-body" id="p-body"></div>
@@ -267,7 +271,7 @@ function card(j) {
         ${j.red_flag_penalty > 0 ? `<div class="penalty" title="Red-flag penalty subtracted from the weighted score">−${esc(j.red_flag_penalty)}</div>` : ""}
       </div>
       <div style="flex:1">
-        <div class="title">${esc(j.title)} — ${esc(j.company)}</div>
+        <div class="title"><a class="tlink" href="${esc(safeUrl(j.sources[0]?.url))}" target="_blank" rel="noopener" title="Open the posting on ${esc(j.sources[0]?.name || "the board")}">${esc(j.title)}</a> — ${esc(j.company)}</div>
         <div class="headline">
           <span class="salary ${j.salary.stated ? "stated" : ""}">${esc(j.salary.text)}</span>
           <span class="age ${ageCls(j.first_seen_at)}">${esc(age(j.first_seen_at))}</span>
@@ -315,6 +319,11 @@ function renderPanel(j) {
   panelJob = j || null;
   if (!j) return;
   $("#p-title").textContent = `${j.title} — ${j.company}`;
+  // Every board carrying this job, so an application can be sent from whichever
+  // one the owner prefers — and so a dead link on one source is not a dead end.
+  $("#p-links").innerHTML = (j.sources || [])
+    .map(s => `<a class="src ${esc(s.name)}" href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener">open on ${esc(s.name)} &#8599;</a>`)
+    .join("");
   const d = j.draft;
   $("#p-body").innerHTML = d
     ? (d.stale ? `<div class="applied">Written before your profile changed — worth regenerating.</div>` : "")

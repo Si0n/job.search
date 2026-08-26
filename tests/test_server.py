@@ -68,6 +68,7 @@ def test_an_oversized_note_is_rejected_rather_than_truncated_silently():
 # --- the rewrite-note endpoint carries the same guards as /api/status ---
 
 from jobsearch.drafts import parse_note
+from jobsearch.server import host_allowed
 
 
 def test_note_endpoint_rejects_a_boolean_id_like_the_status_endpoint():
@@ -78,3 +79,42 @@ def test_note_endpoint_rejects_a_boolean_id_like_the_status_endpoint():
 def test_note_endpoint_rejects_malformed_json():
     with pytest.raises(ValueError):
         parse_note(b"{not json")
+
+
+# --- Host guard: the DNS-rebinding defence, and what --lan widens ------------
+
+def test_loopback_hosts_are_accepted():
+    assert host_allowed("127.0.0.1:8765", 8765, False)
+    assert host_allowed("localhost:8765", 8765, False)
+    assert host_allowed("[::1]:8765", 8765, False)
+
+
+def test_a_domain_name_is_rejected_even_when_it_resolves_here():
+    # This is the whole point of the check. A rebinding attack points a domain
+    # the browser trusts at this machine, so the request arrives with the
+    # attacker's domain in Host — never a literal address.
+    assert not host_allowed("evil.example.com:8765", 8765, False)
+    assert not host_allowed("evil.example.com:8765", 8765, True)
+
+
+def test_a_private_address_needs_lan():
+    assert not host_allowed("192.168.1.24:8765", 8765, False)
+    assert host_allowed("192.168.1.24:8765", 8765, True)
+    assert host_allowed("10.0.0.5:8765", 8765, True)
+    assert host_allowed("172.16.3.9:8765", 8765, True)
+
+
+def test_lan_does_not_open_up_public_addresses():
+    # is_private also covers the reserved and documentation ranges, which is
+    # wider than "this wifi" but reaches no real host; what matters is that a
+    # routable public address is still refused.
+    assert not host_allowed("8.8.8.8:8765", 8765, True)
+    assert not host_allowed("93.184.216.34:8765", 8765, True)
+
+
+def test_a_mismatched_port_is_rejected():
+    assert not host_allowed("127.0.0.1:9999", 8765, False)
+
+
+def test_an_absent_host_is_rejected():
+    assert not host_allowed("", 8765, True)

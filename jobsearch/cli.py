@@ -56,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = sub.add_parser("serve", help="run the local dashboard")
     serve_parser.add_argument("--port", type=int, default=8765)
     serve_parser.add_argument("--open", action="store_true", dest="open_browser")
+    serve_parser.add_argument("--lan", action="store_true",
+                              help="also serve to other devices on this network "
+                                   "(no password; anyone on the wifi can read and triage)")
 
     list_parser = sub.add_parser("list", help="list jobs")
     list_parser.add_argument("--status", choices=APPLICATION_STATUSES)

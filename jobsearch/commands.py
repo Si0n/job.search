@@ -184,7 +184,8 @@ def serve(args) -> dict:
     from jobsearch import server
 
     server.run(load_settings(args.env), port=args.port,
-               open_browser=getattr(args, "open_browser", False))
+               open_browser=getattr(args, "open_browser", False),
+               lan=getattr(args, "lan", False))
     return {"command": "serve", "status": "stopped"}
 
 

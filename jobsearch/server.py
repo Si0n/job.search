@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import sys
 import traceback
 import webbrowser
@@ -15,6 +17,45 @@ from jobsearch.models import APPLICATION_STATUSES
 VALID_STATUSES = set(APPLICATION_STATUSES)
 MAX_NOTE = 2000
 STATIC = Path(__file__).parent / "static"
+
+
+def host_allowed(host_header: str, port: int, lan: bool) -> bool:
+    """Whether a request's Host names this server by a literal address.
+
+    This is the DNS-rebinding guard. A rebinding attack works by pointing a
+    domain the browser already trusts at this machine's address, so the request
+    still arrives carrying the ATTACKER'S DOMAIN in Host. Requiring a literal
+    IP is what defeats it, and that property survives widening the accepted
+    range from loopback to the private ranges — which is all `lan` does, so a
+    phone on the same wifi can reach the dashboard.
+    """
+    if not host_header:
+        return False
+    hostname, _, tail = host_header.rpartition(":")
+    if not hostname:
+        hostname, tail = tail, ""
+    hostname = hostname.strip("[]")
+    if tail and tail != str(port):
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return bool(ip.is_loopback or (lan and ip.is_private))
+
+
+def lan_address() -> str | None:
+    """This machine's address on the local network, for the printed URL."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))          # TEST-NET-1, never routed
+        return probe.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        probe.close()
 
 
 def parse_status_request(body: bytes) -> tuple[int, str, str | None]:
@@ -54,7 +95,7 @@ def parse_status_request(body: bytes) -> tuple[int, str, str | None]:
     return job_id, status, note
 
 
-def _make_handler(settings, port):
+def _make_handler(settings, port, lan: bool = False):
     # Loaded once at startup, not per request: it never changes while the server
     # runs, and a bad profile should fail loudly at boot rather than on a fetch.
     try:
@@ -73,6 +114,12 @@ def _make_handler(settings, port):
             self.wfile.write(data)
 
         def do_GET(self):
+            # Reads are guarded too, not just writes: the dashboard renders the
+            # owner's job list and application drafts, so a rebinding attack that
+            # only ever GETs still walks off with all of it.
+            if not host_allowed(self.headers.get("Host", ""), port, lan):
+                self._send(400, {"error": "invalid host"})
+                return
             parsed = urlparse(self.path)
             if parsed.path in ("/", "/index.html"):
                 page = (STATIC / "index.html").read_bytes()
@@ -106,6 +153,9 @@ def _make_handler(settings, port):
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
+            if not host_allowed(self.headers.get("Host", ""), port, lan):
+                self._send(400, {"error": "invalid host"})
+                return
             route = urlparse(self.path).path
             if route not in ("/api/status", "/api/draft-note"):
                 self._send(404, {"error": "not found"})
@@ -120,13 +170,6 @@ def _make_handler(settings, port):
             content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
             if content_type != "application/json":
                 self._send(415, {"error": "Content-Type must be application/json"})
-                return
-
-            # Blunts DNS rebinding: a hostile domain resolving to 127.0.0.1 still
-            # sends a Host header naming itself, not this server's address.
-            host = self.headers.get("Host", "")
-            if host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
-                self._send(400, {"error": "invalid host"})
                 return
 
             length = int(self.headers.get("Content-Length") or 0)
@@ -184,11 +227,18 @@ def _make_handler(settings, port):
     return Handler
 
 
-def run(settings, host: str = "127.0.0.1", port: int = 8765,
-        open_browser: bool = False) -> None:
-    httpd = ThreadingHTTPServer((host, port), _make_handler(settings, port))
-    url = f"http://{host}:{port}/"
-    print(f"jobsearch dashboard on {url}  (ctrl-c to stop)")
+def run(settings, host: str | None = None, port: int = 8765,
+        open_browser: bool = False, lan: bool = False) -> None:
+    host = host or ("0.0.0.0" if lan else "127.0.0.1")
+    httpd = ThreadingHTTPServer((host, port), _make_handler(settings, port, lan))
+    url = f"http://127.0.0.1:{port}/"
+    print(f"jobsearch dashboard on {url}  (ctrl-c to stop)", flush=True)
+    if lan:
+        address = lan_address()
+        if address:
+            print(f"  on this network: http://{address}:{port}/", flush=True)
+        print("  --lan serves the dashboard to every device on this network, with "
+              "no password, and its triage and note endpoints accept writes.", flush=True)
     if open_browser:
         webbrowser.open(url)
     try:
