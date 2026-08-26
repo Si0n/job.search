@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from jobsearch import dedupe, normalize, salary as salary_mod
@@ -221,16 +222,16 @@ def upsert_posting(conn, source: dict, posting: RawPosting, raw_fetch_id: int | 
                 if existing["description_hash"] != desc_hash:
                     cur.execute(
                         "UPDATE job_sources SET description=%s, description_hash=%s, "
-                        "salary_raw=%s, url=%s, raw_fetch_id=%s, last_seen_at=%s, "
-                        "missed_runs=0, inactive_at=NULL WHERE id=%s",
+                        "salary_raw=%s, url=%s, raw_fetch_id=%s, source_meta=%s, "
+                        "last_seen_at=%s, missed_runs=0, inactive_at=NULL WHERE id=%s",
                         (description, desc_hash, posting.salary_raw, posting.url,
-                         raw_fetch_id, now, existing["id"]),
+                         raw_fetch_id, json.dumps(posting.meta or {}), now, existing["id"]),
                     )
                 else:
                     cur.execute(
                         "UPDATE job_sources SET last_seen_at=%s, missed_runs=0, "
-                        "inactive_at=NULL WHERE id=%s",
-                        (now, existing["id"]),
+                        "inactive_at=NULL, source_meta=%s WHERE id=%s",
+                        (now, json.dumps(posting.meta or {}), existing["id"]),
                     )
             job_id = existing["job_id"]
             is_new = False
@@ -252,10 +253,11 @@ def upsert_posting(conn, source: dict, posting: RawPosting, raw_fetch_id: int | 
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO job_sources (job_id, source_id, external_id, url, raw_fetch_id, "
-                    "description, description_hash, salary_raw, posted_at, first_seen_at, "
-                    "last_seen_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "description, description_hash, salary_raw, posted_at, source_meta, "
+                    "first_seen_at, last_seen_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (job_id, source["id"], posting.external_id, posting.url, raw_fetch_id,
-                     description, desc_hash, posting.salary_raw, posting.posted_at, now, now),
+                     description, desc_hash, posting.salary_raw, posting.posted_at,
+                     json.dumps(posting.meta or {}), now, now),
                 )
             is_new = True
 

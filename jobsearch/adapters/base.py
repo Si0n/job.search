@@ -13,6 +13,13 @@ from bs4 import BeautifulSoup
 from jobsearch.models import ParseResult, RawFetch, RawPosting
 
 REQUIRED_FIELDS = ("external_id", "url", "title", "company")
+# Selector field names that map onto a RawPosting attribute. Anything else a
+# selectors row names is carried through in `meta` instead of being dropped, so
+# a new hint costs a database row rather than a code change.
+POSTING_FIELDS = frozenset(REQUIRED_FIELDS) | {
+    "description", "location", "salary_raw", "posted_at",
+    "arrangement_hint", "employment_hint",
+}
 # urljoin("https://djinni.co", "javascript:alert(1)") returns the scheme
 # unchanged — a hostile href would otherwise land verbatim in job_sources.url.
 # Checked here, not in store.upsert_posting, so one poisoned posting is
@@ -162,6 +169,8 @@ class HtmlAdapter(Adapter):
                 continue
 
             posting = RawPosting(
+                meta={k: v for k, v in values.items()
+                      if k not in POSTING_FIELDS and v is not None},
                 external_id=values["external_id"],
                 url=values["url"],
                 title=values["title"],
@@ -252,6 +261,8 @@ class JsonAdapter(Adapter):
                 continue
 
             postings.append(self.post_process(RawPosting(
+                meta={k: v for k, v in values.items()
+                      if k not in POSTING_FIELDS and v is not None},
                 external_id=values["external_id"],
                 url=values["url"],
                 title=values["title"],

@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from jobsearch import dashboard, db, store
+from jobsearch.profile import load_profile
 from jobsearch.models import APPLICATION_STATUSES
 
 VALID_STATUSES = set(APPLICATION_STATUSES)
@@ -54,6 +55,13 @@ def parse_status_request(body: bytes) -> tuple[int, str, str | None]:
 
 
 def _make_handler(settings, port):
+    # Loaded once at startup, not per request: it never changes while the server
+    # runs, and a bad profile should fail loudly at boot rather than on a fetch.
+    try:
+        PROFILE = load_profile().data
+    except Exception:
+        PROFILE = None
+
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload: dict | list, content_type="application/json"):
             data = json.dumps(payload, default=str).encode()
@@ -91,7 +99,7 @@ def _make_handler(settings, port):
                     return
                 finally:
                     conn.close()
-                self._send(200, dashboard.build_view(jobs, postings))
+                self._send(200, dashboard.build_view(jobs, postings, PROFILE))
                 return
 
             self._send(404, {"error": "not found"})

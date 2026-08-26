@@ -1,6 +1,35 @@
 from __future__ import annotations
 
 import json
+import re
+
+# Canonical name -> pattern. Aliases live here so the page never sees two names
+# for one technology. Ambiguous short names carry their own guard: bare "Go" is
+# also an English verb, so it is only matched when not followed by the words that
+# make it one.
+TECH_VOCAB: dict[str, str] = {
+    "PHP": r"\bPHP\b", "Laravel": r"\bLaravel\b", "Symfony": r"\bSymfony\b",
+    "Yii": r"\bYii\s?2?\b", "WordPress": r"\bWord\s?Press\b",
+    "Magento": r"\bMagento\b", "Shopware": r"\bShopware\b", "Shopify": r"\bShopify\b",
+    "MySQL": r"\bMy\s?SQL\b", "PostgreSQL": r"\b(?:PostgreSQL|Postgres)\b",
+    "MongoDB": r"\bMongo\s?DB?\b", "Redis": r"\bRedis\b",
+    "Elasticsearch": r"\b(?:Elasticsearch|ElasticSearch|OpenSearch)\b",
+    "RabbitMQ": r"\bRabbit\s?MQ\b", "Kafka": r"\bKafka\b",
+    "Docker": r"\bDocker\b", "Kubernetes": r"\b(?:Kubernetes|k8s)\b",
+    "Terraform": r"\bTerraform\b", "Nginx": r"\bNginx\b",
+    "AWS": r"\bAWS\b", "GCP": r"\b(?:GCP|Google Cloud)\b", "Azure": r"\bAzure\b",
+    "Vue": r"\bVue(?:\.js|\s?[23])?\b", "React": r"\bReact(?:\.js)?\b",
+    "Angular": r"\bAngular\b", "TypeScript": r"\bTypeScript\b",
+    "Node.js": r"\bNode\.?\s?js\b|\bNodeJS\b",
+    "Python": r"\bPython\b", "Django": r"\bDjango\b", "Flask": r"\bFlask\b",
+    "Ruby": r"\bRuby\b", "Java": r"\bJava\b(?!Script)",
+    "Go": r"\b(?:Golang|Go)\b(?!\s+(?:to|through|live|beyond|into|on|back|ahead|over|with|for|about|deep))",
+    "GraphQL": r"\bGraphQL\b", "REST": r"\bREST(?:ful)?\b",
+    "gRPC": r"\bgRPC\b", "CI/CD": r"\bCI\s?/\s?CD\b",
+}
+
+_CEFR = ["A1", "A2", "B1", "B2", "C1", "C2"]
+
 
 SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£", "PLN": "zł", "UAH": "₴"}
 
@@ -19,7 +48,7 @@ WHERE j.inactive_at IS NULL AND j.filtered_at IS NULL
 
 _POSTINGS_SQL = """
 SELECT js.job_id, js.source_id, s.name AS source_name, js.url, js.posted_at,
-       js.description
+       js.description, js.source_meta
 FROM job_sources js
 JOIN sources s ON s.id = js.source_id
 WHERE js.inactive_at IS NULL
@@ -63,6 +92,61 @@ def _as_json(value, fallback):
         return fallback
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def match_tech(description: str | None, skills: dict[str, list[str]]) -> list[dict]:
+    """Pure. Which technologies a posting names, and which tier of the owner's
+    profile each sits in — `tier=None` means the job wants something the profile
+    does not list, which is the half worth reading."""
+    if not description:
+        return []
+
+    tier_of: dict[str, str] = {}
+    for tier, entries in (skills or {}).items():
+        for entry in entries or []:
+            for canonical in TECH_VOCAB:
+                if _norm(canonical) in _norm(entry):
+                    tier_of.setdefault(canonical, tier)
+
+    found = [
+        {"name": name, "tier": tier_of.get(name)}
+        for name, pattern in TECH_VOCAB.items()
+        if re.search(pattern, description, re.I)
+    ]
+    order = {"expert": 0, "strong": 1, "familiar": 2}
+    found.sort(key=lambda t: (order.get(t["tier"], 3), t["name"].lower()))
+    return found
+
+
+def language_requirement(meta: dict | None, profile_languages: list[str]) -> dict | None:
+    """Pure. A stated language requirement, and whether it exceeds what the owner
+    has. Returns None when the posting states nothing — absence is not an
+    all-clear, and the page must be able to tell the two apart."""
+    hint = (meta or {}).get("language_hint") or ""
+    if not hint.strip():
+        return None
+
+    match = re.search(r"\b([A-Z][a-z]+)\b.*?\b([ABC][12])\b", hint)
+    if not match:
+        return {"text": hint.strip(), "level": None, "gap": False}
+    language, level = match.group(1), match.group(2)
+
+    own = ""
+    for entry in profile_languages or []:
+        if language.lower() in entry.lower():
+            if "native" in entry.lower():
+                return {"text": hint.strip(), "level": level, "gap": False}
+            levels = re.findall(r"[ABC][12]", entry)
+            if levels:
+                own = max(levels, key=_CEFR.index)
+            break
+
+    gap = True if not own else _CEFR.index(level) > _CEFR.index(own)
+    return {"text": hint.strip(), "level": level, "gap": gap}
+
+
 def format_salary(row: dict) -> dict:
     monthly = row.get("salary_monthly_eur")
     if row.get("salary_source") != "posting" or not row.get("salary_currency"):
@@ -85,6 +169,21 @@ def format_salary(row: dict) -> dict:
     return {"text": text, "stated": True, "monthly_eur": monthly}
 
 
+def _merged_meta(postings: list[dict]) -> dict:
+    """Meta from every posting on this job, canonical source last so it wins.
+    Only one board publishes these hints today, so in practice this picks the
+    one that has them rather than resolving a conflict."""
+    merged: dict = {}
+    for posting in postings:
+        raw = posting.get("source_meta")
+        if not raw:
+            continue
+        parsed = _as_json(raw, {})
+        if isinstance(parsed, dict):
+            merged.update(parsed)
+    return merged
+
+
 def _pick_description(job: dict, postings: list[dict]) -> str:
     canonical = job.get("canonical_source_id")
     preferred = [p for p in postings if p["source_id"] == canonical and p.get("description")]
@@ -96,8 +195,14 @@ def _pick_description(job: dict, postings: list[dict]) -> str:
     return max(with_text, key=lambda p: len(p["description"]))["description"]
 
 
-def build_view(job_rows: list[dict], posting_rows: list[dict]) -> list[dict]:
-    """Pure. Rows in, cards out — no database, no formatting decisions left to the page."""
+def build_view(job_rows: list[dict], posting_rows: list[dict],
+               profile: dict | None = None) -> list[dict]:
+    """Pure. Rows in, cards out — no database, no formatting decisions left to the page.
+
+    `profile` is optional: without it the cards simply carry no technology or
+    language chips, rather than carrying wrong ones."""
+    skills = (profile or {}).get("skills") or {}
+    languages = ((profile or {}).get("identity") or {}).get("languages") or []
     by_job: dict[int, list[dict]] = {}
     for posting in posting_rows:
         by_job.setdefault(posting["job_id"], []).append(posting)
@@ -141,6 +246,9 @@ def build_view(job_rows: list[dict], posting_rows: list[dict]) -> list[dict]:
             "is_new": job.get("status") is None,
             "first_seen_at": str(job.get("first_seen_at") or ""),
             "description": _pick_description(job, postings),
+            "tech": match_tech(_pick_description(job, postings), skills),
+            "language": language_requirement(_merged_meta(postings), languages),
+            "experience_hint": (_merged_meta(postings) or {}).get("experience_hint"),
             "sources": [
                 {"name": p["source_name"], "url": p["url"],
                  "posted_at": str(p["posted_at"]) if p.get("posted_at") else None}

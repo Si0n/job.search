@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from jobsearch.dashboard import build_view, format_salary
+from jobsearch.dashboard import build_view, format_salary, language_requirement, match_tech
 
 JOB = {
     "id": 42, "title": "Senior PHP Developer", "company": "Acme",
@@ -131,3 +131,80 @@ def test_a_missing_fingerprint_never_flags_a_duplicate():
     postings = [{**POSTINGS[0], "job_id": 1}, {**POSTINGS[0], "job_id": 2}]
     view = build_view([a, b], postings)
     assert not any(c["is_duplicate"] for c in view)
+
+
+# --- technology matching against the owner's skill tiers ---
+
+SKILLS = {
+    "expert": ["PHP", "Laravel", "MySQL", "REST API design"],
+    "strong": ["Vue 3", "TypeScript", "Redis", "RabbitMQ"],
+    "familiar": ["Python (Flask)", "Node.js"],
+}
+
+
+def test_tech_is_tagged_with_the_tier_it_sits_in():
+    found = {t["name"]: t["tier"] for t in match_tech("We use PHP, Laravel, Redis and Node.js", SKILLS)}
+    assert found["PHP"] == "expert"
+    assert found["Laravel"] == "expert"
+    assert found["Redis"] == "strong"
+    assert found["Node.js"] == "familiar"
+
+
+def test_tech_the_job_wants_that_the_profile_does_not_list_is_tier_none():
+    found = {t["name"]: t["tier"] for t in match_tech("Kubernetes and Kafka experience required", SKILLS)}
+    assert found["Kubernetes"] is None
+    assert found["Kafka"] is None
+
+
+def test_a_technology_is_reported_once_however_often_it_appears():
+    names = [t["name"] for t in match_tech("PHP, php, and more PHP", SKILLS)]
+    assert names.count("PHP") == 1
+
+
+def test_aliases_resolve_to_one_canonical_name():
+    assert {t["name"] for t in match_tech("Postgres and NodeJS and k8s", SKILLS)} == {
+        "PostgreSQL", "Node.js", "Kubernetes"}
+
+
+def test_bare_go_as_an_english_verb_is_not_matched_as_a_language():
+    assert "Go" not in {t["name"] for t in match_tech("You will go to the office and go through code", SKILLS)}
+    assert "Go" in {t["name"] for t in match_tech("Backend services written in Go and PHP", SKILLS)}
+
+
+def test_matches_are_ordered_expert_first_and_unlisted_last():
+    tiers = [t["tier"] for t in match_tech("Kubernetes, Redis, PHP, Node.js", SKILLS)]
+    assert tiers == ["expert", "strong", "familiar", None]
+
+
+def test_an_empty_description_yields_nothing():
+    assert match_tech("", SKILLS) == []
+    assert match_tech(None, SKILLS) == []
+
+
+# --- language requirement vs the owner's own levels ---
+
+LANGS = ["Ukrainian (native)", "Russian (native)", "English (B1-B2)", "Polish (B1)"]
+
+
+def test_a_level_above_the_owners_is_flagged_as_a_gap():
+    r = language_requirement({"language_hint": "English - C1"}, LANGS)
+    assert r["level"] == "C1" and r["gap"] is True
+
+
+def test_a_level_at_or_below_the_owners_is_not_a_gap():
+    assert language_requirement({"language_hint": "English - B2"}, LANGS)["gap"] is False
+    assert language_requirement({"language_hint": "English - B1"}, LANGS)["gap"] is False
+
+
+def test_a_language_the_owner_speaks_natively_is_never_a_gap():
+    assert language_requirement({"language_hint": "Ukrainian - C2"}, LANGS)["gap"] is False
+
+
+def test_a_language_absent_from_the_profile_is_flagged():
+    r = language_requirement({"language_hint": "German - B2"}, LANGS)
+    assert r["gap"] is True
+
+
+def test_no_hint_yields_nothing_rather_than_a_false_all_clear():
+    assert language_requirement({}, LANGS) is None
+    assert language_requirement({"language_hint": ""}, LANGS) is None

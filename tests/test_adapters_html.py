@@ -223,3 +223,32 @@ def test_dou_arrangement_hint_extracted_for_most_postings(dou_selectors):
     result = DouAdapter().parse(_dou_fixture("valid.html.gz"), dou_selectors)
     non_none = sum(1 for p in result.postings if p.arrangement_hint)
     assert non_none >= 17
+
+
+def test_selector_fields_with_no_matching_posting_attribute_land_in_meta():
+    # The project's rule is that markup knowledge lives in selector JSON, not code.
+    # A new hint should therefore need only a selectors row — never a code change.
+    selectors = {**SELECTORS, "fields": {**SELECTORS["fields"],
+                 "language_hint": {"selector": ".company", "attr": "text"}}}
+    result = _Probe().parse(_raw(VALID), selectors)
+    assert result.status == "ok"
+    assert result.postings[0].meta["language_hint"] == "Acme"
+    # and it must not have been silently dropped or collided with a real attribute
+    assert result.postings[0].company == "Acme"
+
+
+def test_meta_is_empty_rather_than_absent_when_no_extra_fields_are_configured():
+    result = _Probe().parse(_raw(VALID), SELECTORS)
+    assert result.postings[0].meta == {}
+
+
+def test_djinni_captures_language_and_experience_hints(djinni_selectors):
+    # Djinni publishes English level and years-of-experience in the same tag row
+    # as the arrangement. Both were discarded until these selectors were added.
+    result = DjinniAdapter().parse(_fixture("valid.html.gz"), djinni_selectors)
+    assert result.status == "ok"
+    with_lang = [p for p in result.postings if p.meta.get("language_hint")]
+    with_exp = [p for p in result.postings if p.meta.get("experience_hint")]
+    assert len(with_lang) >= 12
+    assert len(with_exp) >= 12
+    assert all("English" in p.meta["language_hint"] for p in with_lang)
