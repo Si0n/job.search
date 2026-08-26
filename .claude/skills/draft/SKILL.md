@@ -39,6 +39,12 @@ PSP, SEPA, idempotency, KYC stay exactly as he uses them daily.
 jobsearch draft-context --id <job-id>
 ```
 
+**Check `pending_note` first.** If it is set, the owner asked for a change from the
+dashboard — follow it. It is an instruction about this specific job's text ("shorter",
+"lead with the KYC work", "less formal"), not a general rule. Storing the new draft
+clears it automatically and records it as `applied_note`, so you never need to clear it
+yourself and never re-apply an instruction twice.
+
 Returns the full description, the score with its per-dimension notes, hard concerns,
 strengths and weaknesses, and the owner's profile. Read the dimension notes: they say
 what is genuinely strong and genuinely weak about this match, and the cover letter
