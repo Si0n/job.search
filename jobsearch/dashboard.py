@@ -37,7 +37,7 @@ _JOBS_SQL = """
 SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.arrangement, j.employment_type,
        j.salary_min, j.salary_max, j.salary_currency, j.salary_period,
        j.salary_source, j.salary_monthly_eur, j.first_seen_at, j.canonical_source_id,
-       sc.score, sc.red_flag_penalty, sc.dimensions, sc.hard_concerns,
+       sc.score, sc.red_flag_penalty, sc.dimensions, sc.dimension_notes, sc.hard_concerns,
        sc.strengths, sc.weaknesses, sc.verdict,
        a.status
 FROM jobs j
@@ -169,6 +169,34 @@ def format_salary(row: dict) -> dict:
     return {"text": text, "stated": True, "monthly_eur": monthly}
 
 
+def _dimension_detail(dimensions: dict, notes: dict, weights: dict) -> list[dict]:
+    """What each dimension's number actually did to the score.
+
+    Two dimensions showing 9 look identical on a card, but a 9 at weight 30
+    contributes three times what a 9 at weight 10 does. Ordered by contribution
+    so the dimension that decided the score reads first. `note` is the scorer's
+    own reasoning where it recorded any, and None where it did not — an absent
+    note must not read as "considered and had nothing to say".
+    """
+    if not weights:
+        return []
+    total = sum(weights.values()) or 1
+    detail = []
+    for name, value in (dimensions or {}).items():
+        weight = weights.get(name, 0)
+        try:
+            contribution = round(float(value) * weight / total, 2)
+        except (TypeError, ValueError):
+            contribution = 0.0
+        detail.append({
+            "name": name, "value": value, "weight": weight,
+            "contribution": contribution,
+            "note": (notes or {}).get(name) or None,
+        })
+    detail.sort(key=lambda d: d["contribution"], reverse=True)
+    return detail
+
+
 def _merged_meta(postings: list[dict]) -> dict:
     """Meta from every posting on this job, canonical source last so it wins.
     Only one board publishes these hints today, so in practice this picks the
@@ -202,6 +230,7 @@ def build_view(job_rows: list[dict], posting_rows: list[dict],
     `profile` is optional: without it the cards simply carry no technology or
     language chips, rather than carrying wrong ones."""
     skills = (profile or {}).get("skills") or {}
+    weights = (profile or {}).get("weights") or {}
     languages = ((profile or {}).get("identity") or {}).get("languages") or []
     by_job: dict[int, list[dict]] = {}
     for posting in posting_rows:
@@ -238,6 +267,10 @@ def build_view(job_rows: list[dict], posting_rows: list[dict],
             "score": job.get("score"),
             "red_flag_penalty": job.get("red_flag_penalty") or 0,
             "dimensions": _as_json(job.get("dimensions"), {}),
+            "dimension_detail": _dimension_detail(
+                _as_json(job.get("dimensions"), {}),
+                _as_json(job.get("dimension_notes"), {}),
+                weights),
             "hard_concerns": _as_json(job.get("hard_concerns"), []),
             "strengths": _as_json(job.get("strengths"), []),
             "weaknesses": _as_json(job.get("weaknesses"), []),

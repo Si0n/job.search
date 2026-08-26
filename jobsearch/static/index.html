@@ -61,6 +61,8 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;
   border-color:color-mix(in srgb,var(--warn) 55%,transparent);
   background:color-mix(in srgb,var(--warn) 12%,transparent)}
 .lang.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+.dim[title]{cursor:help}
+.dim.has-note{border-style:solid;box-shadow:inset 0 -2px 0 0 color-mix(in srgb,currentColor 35%,transparent)}
 .dim.d-hi{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent);
   background:color-mix(in srgb,var(--good) 10%,transparent)}
 .dim.d-mid{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent);
@@ -189,8 +191,18 @@ function render() {
 function card(j) {
   const cls = j.score >= 8 ? "s-hi" : j.score >= 6 ? "s-mid" : "s-lo";
   const dimCls = v => Number(v) >= 8 ? "d-hi" : Number(v) >= 6 ? "d-mid" : Number(v) <= 3 ? "d-lo" : "";
-  const dims = Object.entries(j.dimensions || {})
-    .map(([k, v]) => `<span class="dim ${dimCls(v)}">${esc(k.replace(/_fit|_potential/, "").replace(/_/g, " "))} ${esc(v)}</span>`).join("");
+  const dims = (j.dimension_detail || []).length
+    ? j.dimension_detail.map(d => {
+        const label = d.name.replace(/_fit|_potential/, "").replace(/_/g, " ");
+        // Tooltip answers two different questions: what the scorer thought (note),
+        // and how much this number actually moved the total (weight/contribution).
+        // The arithmetic is always available; the reasoning only when it was recorded.
+        const arith = `weight ${d.weight}% · contributed ${d.contribution.toFixed(1)} pts`;
+        const tip = d.note ? `${d.note}\n\n${arith}` : arith;
+        return `<span class="dim ${dimCls(d.value)} ${d.note ? "has-note" : ""}" title="${esc(tip)}">${esc(label)} ${esc(d.value)}</span>`;
+      }).join("")
+    : Object.entries(j.dimensions || {})
+        .map(([k, v]) => `<span class="dim ${dimCls(v)}">${esc(k.replace(/_fit|_potential/, "").replace(/_/g, " "))} ${esc(v)}</span>`).join("");
   const tech = (j.tech || [])
     .map(t => `<span class="tech t-${t.tier || "none"}" title="${t.tier ? esc("your " + t.tier + " tier") : "not in your profile"}">${esc(t.name)}</span>`)
     .join("");

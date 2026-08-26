@@ -75,13 +75,15 @@ def coarse_passed(conn, profile, minimum: int = 6, limit: int = 60) -> list[dict
 def record(conn, job_id: int, run_id: int, pass_no: int, payload: dict, profile) -> dict:
     if pass_no == 1:
         stored = {
-            "score": int(payload["score"]), "dimensions": None, "red_flag_penalty": 0,
+            "score": int(payload["score"]), "dimensions": None, "dimension_notes": None,
+            "red_flag_penalty": 0,
             "hard_concerns": None, "strengths": None, "weaknesses": None, "verdict": None,
         }
     else:
         stored = {
             "score": int(payload["score"]),
             "dimensions": json.dumps(payload.get("dimensions") or {}),
+            "dimension_notes": json.dumps(payload["dimension_notes"]) if payload.get("dimension_notes") else None,
             "red_flag_penalty": int(payload.get("red_flag_penalty", 0)),
             "hard_concerns": json.dumps(payload.get("hard_concerns") or []),
             "strengths": json.dumps(payload.get("strengths") or []),
@@ -91,10 +93,12 @@ def record(conn, job_id: int, run_id: int, pass_no: int, payload: dict, profile)
 
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO scores (job_id, run_id, `pass`, score, dimensions, red_flag_penalty, "
+            "INSERT INTO scores (job_id, run_id, `pass`, score, dimensions, dimension_notes, "
+            "red_flag_penalty, "
             "hard_concerns, strengths, weaknesses, verdict, profile_version, profile_hash, "
-            "scored_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "scored_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (job_id, run_id, pass_no, stored["score"], stored["dimensions"],
+             stored["dimension_notes"],
              stored["red_flag_penalty"], stored["hard_concerns"], stored["strengths"],
              stored["weaknesses"], stored["verdict"], profile.version, profile.hash,
              datetime.now()),

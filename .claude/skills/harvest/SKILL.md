@@ -162,6 +162,15 @@ the employer itself.
     "arrangement_fit": 10, "domain_fit": 6, "company_fit": 7,
     "growth_potential": 6
   },
+  "dimension_notes": {
+    "technical_fit": "Laravel and MySQL are the core of the stack, not a bullet point",
+    "seniority_fit": "Scope is a team lead; the posting asks for 8+ years",
+    "compensation_fit": "No figure, but the level implies above the floor",
+    "arrangement_fit": "States remote explicitly, EU hours",
+    "domain_fit": "Payments adjacent — iGaming operator, not a bank",
+    "company_fit": "Consultancy, so client work rather than one owned product",
+    "growth_potential": "Leads toward architecture ownership"
+  },
   "red_flag_penalty": 0,
   "hard_concerns": [],
   "strengths": ["..."],
@@ -178,8 +187,14 @@ values yourself; don't hardcode 100, even though that's what it is today), round
 Worked from the example above: `(9×30 + 7×15 + 8×15 + 10×10 + 6×10 + 7×10 + 6×10) / 100
 = 785 / 100 = 7.85` → rounds to 8, matching `"score": 8` above.
 
+`dimension_notes` carries one short line per dimension saying **why that number**, not
+what the dimension means. The card shows it on hover, so it is the only place a reader
+can find out why company fit came out 6 rather than 8. Write it for someone looking at
+one chip with no other context. All seven keys are required here too.
+
 Before calling `score`, check your own payload: all seven dimension keys from `weights`
-must be present in `dimensions`, each a 0–10 integer. `jobsearch score --pass 2` stores
+must be present in `dimensions`, each a 0–10 integer, and all seven present in
+`dimension_notes` with a non-empty string. `jobsearch score --pass 2` stores
 `payload.get("dimensions") or {}` — a payload missing even one key is still accepted and
 stores whatever partial dict you sent. That reads later as "analyzed, nothing found,"
 not "not analyzed," and nothing downstream catches the difference. If a dimension is

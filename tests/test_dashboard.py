@@ -208,3 +208,54 @@ def test_a_language_absent_from_the_profile_is_flagged():
 def test_no_hint_yields_nothing_rather_than_a_false_all_clear():
     assert language_requirement({}, LANGS) is None
     assert language_requirement({"language_hint": ""}, LANGS) is None
+
+
+# --- per-dimension detail: what each number actually contributed ---
+
+WEIGHTS = {"technical_fit": 30, "seniority_fit": 15, "compensation_fit": 15,
+           "arrangement_fit": 10, "domain_fit": 10, "company_fit": 10,
+           "growth_potential": 10}
+
+
+def _detail(job_extra=None, weights=WEIGHTS):
+    job = {**JOB, "dimensions": '{"technical_fit": 9, "company_fit": 6}', **(job_extra or {})}
+    view = build_view([job], POSTINGS, {"weights": weights})
+    return {d["name"]: d for d in view[0]["dimension_detail"]}
+
+
+def test_each_dimension_reports_its_weight_and_what_it_contributed():
+    d = _detail()
+    # 9 x 30 / 100 = 2.7 — three times what the same 9 would be worth at weight 10
+    assert d["technical_fit"]["weight"] == 30
+    assert d["technical_fit"]["contribution"] == 2.7
+    assert d["company_fit"]["contribution"] == 0.6
+
+
+def test_contribution_is_derived_from_the_weight_total_not_a_hardcoded_100():
+    # A profile whose weights sum to 50 must still produce a 0-10 scale.
+    d = _detail(weights={"technical_fit": 30, "company_fit": 20})
+    assert d["technical_fit"]["contribution"] == 5.4
+
+
+def test_detail_is_ordered_by_contribution_so_the_decisive_dimension_reads_first():
+    view = build_view([{**JOB, "dimensions": '{"company_fit": 10, "technical_fit": 7}'}],
+                      POSTINGS, {"weights": WEIGHTS})
+    names = [d["name"] for d in view[0]["dimension_detail"]]
+    assert names[0] == "technical_fit"  # 7x30=2.1 beats 10x10=1.0
+
+
+def test_a_captured_note_is_carried_through_when_present():
+    d = _detail({"dimension_notes": '{"company_fit": "Agency, not a product company"}'})
+    assert d["company_fit"]["note"] == "Agency, not a product company"
+    assert d["technical_fit"]["note"] is None
+
+
+def test_a_dimension_with_no_weight_contributes_nothing_rather_than_crashing():
+    d = _detail(weights={"technical_fit": 100})
+    assert d["company_fit"]["weight"] == 0
+    assert d["company_fit"]["contribution"] == 0.0
+
+
+def test_no_profile_means_no_detail_rather_than_wrong_detail():
+    view = build_view([{**JOB, "dimensions": '{"technical_fit": 9}'}], POSTINGS)
+    assert view[0]["dimension_detail"] == []
