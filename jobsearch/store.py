@@ -119,7 +119,11 @@ def source_by_name(conn, name: str) -> dict:
 
 
 def list_sources(conn, *, degraded: bool = False) -> list[dict]:
-    sql = "SELECT name, enabled, fetch_mode, status, consecutive_empty, last_ok_at FROM sources"
+    # base_url and query travel with the health fields so a browser source,
+    # which has no cached fetch for repair-context to read, still has one
+    # command that says where to look and what to search for.
+    sql = ("SELECT name, enabled, fetch_mode, status, consecutive_empty, "
+           "last_ok_at, base_url, query FROM sources")
     if degraded:
         sql += " WHERE status = 'degraded'"
     with conn.cursor() as cur:
