@@ -39,10 +39,13 @@ SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.arrangement, j.emp
        j.salary_source, j.salary_monthly_eur, j.first_seen_at, j.canonical_source_id,
        sc.score, sc.red_flag_penalty, sc.dimensions, sc.dimension_notes, sc.hard_concerns,
        sc.strengths, sc.weaknesses, sc.verdict,
-       a.status
+       a.status,
+       d.cover_letter, d.email AS draft_email, d.why_fit,
+       (d.profile_hash <> COALESCE(sc.profile_hash, d.profile_hash)) AS draft_stale
 FROM jobs j
 LEFT JOIN scores sc      ON sc.id = j.latest_score_id
 LEFT JOIN applications a ON a.job_id = j.id
+LEFT JOIN drafts d       ON d.job_id = j.id
 WHERE j.inactive_at IS NULL AND j.filtered_at IS NULL
 """
 
@@ -257,6 +260,9 @@ def build_view(job_rows: list[dict], posting_rows: list[dict],
 
         cards.append({
             "id": job["id"],
+            "draft": ({"cover_letter": job["cover_letter"], "email": job["draft_email"],
+                       "why_fit": job["why_fit"], "stale": bool(job.get("draft_stale"))}
+                      if job.get("cover_letter") else None),
             "is_duplicate": fingerprint_counts.get(job.get("fingerprint") or "", 0) > 1,
             "title": job["title"],
             "company": job["company"],

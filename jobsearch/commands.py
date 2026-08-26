@@ -186,3 +186,33 @@ def serve(args) -> dict:
     server.run(load_settings(args.env), port=args.port,
                open_browser=getattr(args, "open_browser", False))
     return {"command": "serve", "status": "stopped"}
+
+
+def draft_context(args) -> dict:
+    from jobsearch import drafts
+    from jobsearch.profile import load_profile
+
+    settings = load_settings(args.env)
+    profile = load_profile(args.profile)
+    conn = db.connect(settings)
+    try:
+        payload = drafts.context(conn, args.id)
+    finally:
+        conn.close()
+    payload["profile"] = profile.data
+    payload["profile_hash"] = profile.hash
+    return payload
+
+
+def save_draft(args) -> dict:
+    from jobsearch import drafts
+    from jobsearch.profile import load_profile
+
+    settings = load_settings(args.env)
+    profile = load_profile(args.profile)
+    blocks = drafts.parse_draft(args.json)
+    conn = db.connect(settings)
+    try:
+        return drafts.save(conn, args.id, blocks, profile.hash)
+    finally:
+        conn.close()

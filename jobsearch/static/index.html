@@ -61,6 +61,10 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;
   border-color:color-mix(in srgb,var(--warn) 55%,transparent);
   background:color-mix(in srgb,var(--warn) 12%,transparent)}
 .lang.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
+.draft .block{margin-top:10px}
+.blk-h{display:flex;gap:8px;align-items:center;font-size:11.5px;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.04em}
+.cp{font-size:11px;padding:1px 7px}
 .dim[title]{cursor:help}
 .dim.has-note{border-style:solid;box-shadow:inset 0 -2px 0 0 color-mix(in srgb,currentColor 35%,transparent)}
 .dim.d-hi{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent);
@@ -184,6 +188,11 @@ function render() {
   if (sel >= shown.length) sel = Math.max(0, shown.length - 1);
   const cards = $("#list").querySelectorAll("article.card");
   cards.forEach((c, i) => c.classList.toggle("sel", i === sel && shown.length > 0));
+  $("#list").querySelectorAll("button.cp").forEach(b =>
+    b.addEventListener("click", () => {
+      navigator.clipboard?.writeText(b.dataset.copy);
+      b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1200);
+    }));
   $("#list").querySelectorAll("button[data-id]").forEach(b =>
     b.addEventListener("click", () => mark(Number(b.dataset.id), b.dataset.status)));
 }
@@ -239,6 +248,11 @@ function card(j) {
       ${(j.strengths || []).map(s => `<span class="tag">+ ${esc(s)}</span>`).join("")}
       ${(j.weaknesses || []).map(w => `<span class="tag">− ${esc(w)}</span>`).join("")}
     </div>` : ""}
+    ${j.draft ? `<details class="draft"><summary>application draft${j.draft.stale ? " (written before your profile changed)" : ""}</summary>
+      ${["cover_letter","email","why_fit"].map(k => `<div class="block">
+        <div class="blk-h">${esc(k.replace(/_/g," "))}<button class="cp" data-copy="${esc(j.draft[k])}">copy</button></div>
+        <pre class="desc">${esc(j.draft[k])}</pre></div>`).join("")}
+    </details>` : ""}
     <details><summary>description</summary><pre class="desc">${esc(j.description)}</pre></details>
     <div class="actions">
       <button data-id="${j.id}" data-status="interested">Interested</button>

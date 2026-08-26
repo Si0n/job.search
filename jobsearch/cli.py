@@ -27,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
     harvest_parser.add_argument("--dry-run", action="store_true")
 
     sub.add_parser("filter", help="apply hard rules from profile.yaml")
+    dctx = sub.add_parser("draft-context", help="everything needed to draft an application")
+    dctx.add_argument("--id", type=int, required=True)
+    dsave = sub.add_parser("draft", help="store an application draft")
+    dsave.add_argument("--id", type=int, required=True)
+    dsave.add_argument("--json", required=True, help="the draft payload as JSON")
+
     sub.add_parser("sweep", help="age out postings that stopped appearing")
 
     sub.add_parser("run-start", help="open a scoring run").add_argument(
@@ -98,6 +104,18 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.filter_jobs(args))
+        return 0
+
+    if args.command == "draft-context":
+        from jobsearch import commands
+
+        emit(commands.draft_context(args))
+        return 0
+
+    if args.command == "draft":
+        from jobsearch import commands
+
+        emit(commands.save_draft(args))
         return 0
 
     if args.command == "sweep":
