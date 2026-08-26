@@ -259,3 +259,20 @@ def test_a_dimension_with_no_weight_contributes_nothing_rather_than_crashing():
 def test_no_profile_means_no_detail_rather_than_wrong_detail():
     view = build_view([{**JOB, "dimensions": '{"technical_fit": 9}'}], POSTINGS)
     assert view[0]["dimension_detail"] == []
+
+
+def test_a_draft_written_under_the_current_profile_is_not_stale():
+    # The comparison must be against the LIVE profile, not against the job's
+    # score — a job can carry an out-of-date score while its draft is current.
+    from jobsearch.profile import compute_hash
+    prof = {"weights": WEIGHTS, "skills": {}}
+    job = {**JOB, "cover_letter": "Hi", "draft_email": "Hi", "why_fit": "-",
+           "draft_hash": compute_hash(prof)}
+    assert build_view([job], POSTINGS, prof)[0]["draft"]["stale"] is False
+
+
+def test_a_draft_written_under_an_older_profile_is_stale():
+    prof = {"weights": WEIGHTS, "skills": {}}
+    job = {**JOB, "cover_letter": "Hi", "draft_email": "Hi", "why_fit": "-",
+           "draft_hash": "written-under-something-else"}
+    assert build_view([job], POSTINGS, prof)[0]["draft"]["stale"] is True

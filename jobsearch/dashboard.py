@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 
+from jobsearch.profile import compute_hash
+
 # Canonical name -> pattern. Aliases live here so the page never sees two names
 # for one technology. Ambiguous short names carry their own guard: bare "Go" is
 # also an English verb, so it is only matched when not followed by the words that
@@ -41,7 +43,7 @@ SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.arrangement, j.emp
        sc.strengths, sc.weaknesses, sc.verdict,
        a.status,
        d.cover_letter, d.email AS draft_email, d.why_fit,
-       (d.profile_hash <> COALESCE(sc.profile_hash, d.profile_hash)) AS draft_stale
+       d.profile_hash AS draft_hash
 FROM jobs j
 LEFT JOIN scores sc      ON sc.id = j.latest_score_id
 LEFT JOIN applications a ON a.job_id = j.id
@@ -234,6 +236,10 @@ def build_view(job_rows: list[dict], posting_rows: list[dict],
     language chips, rather than carrying wrong ones."""
     skills = (profile or {}).get("skills") or {}
     weights = (profile or {}).get("weights") or {}
+    # Staleness is measured against the LIVE profile, never against the job's own
+    # score: a job can carry an out-of-date score while its draft is current, and
+    # comparing the two would flag exactly the wrong one.
+    current_hash = compute_hash(profile) if profile else None
     languages = ((profile or {}).get("identity") or {}).get("languages") or []
     by_job: dict[int, list[dict]] = {}
     for posting in posting_rows:
@@ -261,7 +267,8 @@ def build_view(job_rows: list[dict], posting_rows: list[dict],
         cards.append({
             "id": job["id"],
             "draft": ({"cover_letter": job["cover_letter"], "email": job["draft_email"],
-                       "why_fit": job["why_fit"], "stale": bool(job.get("draft_stale"))}
+                       "why_fit": job["why_fit"],
+                       "stale": bool(current_hash and job.get("draft_hash") != current_hash)}
                       if job.get("cover_letter") else None),
             "is_duplicate": fingerprint_counts.get(job.get("fingerprint") or "", 0) > 1,
             "title": job["title"],
