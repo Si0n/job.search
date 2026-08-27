@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from jobsearch.dashboard import build_view, format_salary, language_requirement, match_tech
+from jobsearch.dashboard import (
+    JOB_FILTERS, build_view, format_salary, language_requirement, match_tech,
+    parse_job_filter,
+)
 
 JOB = {
     "id": 42, "title": "Senior PHP Developer", "company": "Acme",
@@ -276,3 +279,18 @@ def test_a_draft_written_under_an_older_profile_is_stale():
     job = {**JOB, "cover_letter": "Hi", "draft_email": "Hi", "why_fit": "-",
            "draft_hash": "written-under-something-else"}
     assert build_view([job], POSTINGS, prof)[0]["draft"]["stale"] is True
+
+
+def test_every_offered_filter_resolves_to_itself():
+    for name in JOB_FILTERS:
+        assert parse_job_filter(name) == name
+
+
+@pytest.mark.parametrize("raw", [
+    None, "", "triaged", "APPLIED", "all statuses",
+    "applied' OR 1=1 --", "replied",
+])
+def test_an_unknown_filter_falls_back_to_the_working_queue(raw):
+    # Never raises and never reaches the SQL: an unusable filter costs the owner
+    # the preference, not the page.
+    assert parse_job_filter(raw) == "untriaged"

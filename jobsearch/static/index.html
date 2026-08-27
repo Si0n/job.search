@@ -122,6 +122,7 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;
   border:1px dashed color-mix(in srgb,var(--warn) 55%,transparent)}
 .headline{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:5px}
 .card.sel{outline:2px solid var(--accent);outline-offset:2px}
+.today{margin-top:6px;font-size:12px;color:var(--muted);letter-spacing:.01em}
 kbd{font:inherit;font-size:11px;padding:1px 5px;border:1px solid var(--line);
   border-radius:4px;color:var(--muted)}
 .dim{font-size:11.5px;color:var(--muted);border:1px solid var(--line);
@@ -156,11 +157,18 @@ pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
       <option value="hybrid">hybrid</option>
       <option value="unknown">unspecified</option>
     </select>
-    <label><input type="checkbox" id="all"> include triaged</label>
+    <select id="status">
+      <option value="untriaged">untriaged</option>
+      <option value="interested">interested</option>
+      <option value="applied">applied</option>
+      <option value="skipped">skipped</option>
+      <option value="all">all statuses</option>
+    </select>
     <span id="count"></span>
     <span style="font-size:12px;color:var(--muted)"><kbd>j</kbd><kbd>k</kbd> move
       <kbd>i</kbd>nterested <kbd>a</kbd>pplied <kbd>s</kbd>kip <kbd>o</kbd>pen <kbd>d</kbd>raft</span>
   </div>
+  <div class="today" id="today"></div>
 </header>
 <main id="list"></main>
 <div id="backdrop"></div>
@@ -205,8 +213,9 @@ const safeUrl = u => /^https?:\/\//i.test(String(u ?? "")) ? String(u) : "#";
 async function load() {
   const p = new URLSearchParams();
   if ($("#minScore").value) p.set("min_score", $("#minScore").value);
-  if ($("#all").checked) p.set("all", "1");
+  p.set("status", $("#status").value);
   JOBS = await (await fetch("/api/jobs?" + p)).json();
+  loadStats();
 
   const sources = [...new Set(JOBS.flatMap(j => j.sources.map(s => s.name)))].sort();
   const keep = $("#src").value;
@@ -309,8 +318,27 @@ async function mark(id, status) {
     body: JSON.stringify({id, status}),
   });
   if (!res.ok) { alert("Failed: " + (await res.json()).error); return; }
-  if ($("#all").checked) { JOBS.find(j => j.id === id).status = status; render(); }
-  else { JOBS = JOBS.filter(j => j.id !== id); render(); }
+  // Keep the card only when it still belongs under the active filter, so
+  // "untriaged" keeps draining as you triage while "applied" fills up instead.
+  const view = $("#status").value;
+  if (view === "all" || view === status) {
+    JOBS.find(j => j.id === id).status = status;
+    render();
+  } else {
+    JOBS = JOBS.filter(j => j.id !== id);
+    render();
+  }
+  loadStats();
+}
+
+async function loadStats() {
+  try {
+    const s = await (await fetch("/api/stats")).json();
+    if (s.error) return;
+    $("#today").textContent =
+      `today · ${s.fetched} fetched · ${s.new} new · ${s.scored} scored · ` +
+      `${s.above} above ${s.threshold} · ${s.triaged} triaged`;
+  } catch { /* the strip is informational — never let it break the page */ }
 }
 
 let panelJob = null;
@@ -407,7 +435,7 @@ document.addEventListener("keydown", e => {
 });
 
 ["#q", "#src", "#arr"].forEach(s => $(s).addEventListener("input", render));
-["#minScore", "#all"].forEach(s => $(s).addEventListener("change", load));
+["#minScore", "#status"].forEach(s => $(s).addEventListener("change", load));
 load();
 </script>
 </body>

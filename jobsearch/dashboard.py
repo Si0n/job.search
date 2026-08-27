@@ -62,8 +62,25 @@ ORDER BY js.job_id, s.priority
 """
 
 
+# The dashboard's status filter vocabulary. "untriaged" is the working queue and
+# stays the default; "all" drops the condition entirely. Everything else matches a
+# single applications.status value, so this set is also the whitelist that keeps an
+# arbitrary query string out of the SQL.
+JOB_FILTERS = ("untriaged", "interested", "applied", "skipped", "all")
+
+
+def parse_job_filter(raw: str | None) -> str:
+    """Pure. Resolve the status query parameter to one of JOB_FILTERS.
+
+    Anything unrecognised — a typo, a stale bookmark, an injection attempt —
+    falls back to the working queue rather than erroring, because a filter is a
+    view preference and a broken one should not cost the owner the page.
+    """
+    return raw if raw in JOB_FILTERS else "untriaged"
+
+
 def fetch_rows(conn, *, min_score: int | None = None,
-               include_triaged: bool = False) -> tuple[list[dict], list[dict]]:
+               status_filter: str = "untriaged") -> tuple[list[dict], list[dict]]:
     sql, params = _JOBS_SQL, []
     if min_score is not None:
         # COALESCE, not a bare comparison: sc.score is NULL for the 114 unscored
@@ -74,8 +91,12 @@ def fetch_rows(conn, *, min_score: int | None = None,
         # unaffected.
         sql += " AND COALESCE(sc.score, 0) >= %s"
         params.append(min_score)
-    if not include_triaged:
+    status_filter = parse_job_filter(status_filter)
+    if status_filter == "untriaged":
         sql += " AND a.job_id IS NULL"
+    elif status_filter != "all":
+        sql += " AND a.status = %s"
+        params.append(status_filter)
 
     with conn.cursor() as cur:
         cur.execute(sql, params)
@@ -83,6 +104,40 @@ def fetch_rows(conn, *, min_score: int | None = None,
         cur.execute(_POSTINGS_SQL)
         postings = list(cur.fetchall())
     return jobs, postings
+
+
+INBOX_THRESHOLD = 7
+
+_TODAY_STATS_SQL = {
+    # Harvest totals come from the run rows rather than the jobs table because
+    # "fetched" only exists there — a posting seen again today updates no job row.
+    "fetched": "SELECT COALESCE(SUM(fetched), 0) FROM runs "
+               "WHERE kind = 'harvest' AND DATE(started_at) = CURDATE()",
+    "new": "SELECT COUNT(*) FROM jobs WHERE DATE(first_seen_at) = CURDATE()",
+    "scored": "SELECT COUNT(DISTINCT job_id) FROM scores "
+              "WHERE DATE(scored_at) = CURDATE()",
+    # Pass 2 only: a pass-1 triage score is a coarse integer, not a verdict, so
+    # counting it here would inflate the number of jobs actually worth reading.
+    "above": "SELECT COUNT(DISTINCT job_id) FROM scores "
+             "WHERE DATE(scored_at) = CURDATE() AND `pass` = 2 AND score >= %s",
+    # applications holds one row per job, overwritten in place, so this counts
+    # jobs whose status was last touched today — not every triage action taken
+    # today. Re-marking a job tomorrow moves it out of today's number.
+    "triaged": "SELECT COUNT(*) FROM applications WHERE DATE(updated_at) = CURDATE()",
+}
+
+
+def daily_stats(conn) -> dict[str, int]:
+    """Today's pipeline activity, for the strip under the dashboard filters."""
+    out: dict[str, int] = {}
+    with conn.cursor() as cur:
+        for key, sql in _TODAY_STATS_SQL.items():
+            cur.execute(sql, [INBOX_THRESHOLD] if "%s" in sql else [])
+            row = cur.fetchone()
+            value = list(row.values())[0] if isinstance(row, dict) else (row or [0])[0]
+            out[key] = int(value or 0)
+    out["threshold"] = INBOX_THRESHOLD
+    return out
 
 
 def _as_json(value, fallback):

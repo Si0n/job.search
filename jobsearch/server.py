@@ -133,13 +133,13 @@ def _make_handler(settings, port, lan: bool = False):
             if parsed.path == "/api/jobs":
                 params = parse_qs(parsed.query)
                 min_score = params.get("min_score", [None])[0]
-                include_triaged = params.get("all", ["0"])[0] == "1"
+                status_filter = params.get("status", [None])[0]
                 conn = db.connect(settings)
                 try:
                     jobs, postings = dashboard.fetch_rows(
                         conn,
                         min_score=int(min_score) if min_score else None,
-                        include_triaged=include_triaged,
+                        status_filter=dashboard.parse_job_filter(status_filter),
                     )
                 except Exception:
                     traceback.print_exc(file=sys.stderr)
@@ -148,6 +148,19 @@ def _make_handler(settings, port, lan: bool = False):
                 finally:
                     conn.close()
                 self._send(200, dashboard.build_view(jobs, postings, PROFILE))
+                return
+
+            if parsed.path == "/api/stats":
+                conn = db.connect(settings)
+                try:
+                    stats = dashboard.daily_stats(conn)
+                except Exception:
+                    traceback.print_exc(file=sys.stderr)
+                    self._send(400, {"error": "could not load stats"})
+                    return
+                finally:
+                    conn.close()
+                self._send(200, stats)
                 return
 
             self._send(404, {"error": "not found"})
