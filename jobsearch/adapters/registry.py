@@ -4,6 +4,7 @@ from jobsearch.adapters.base import Adapter
 from jobsearch.adapters.djinni import DjinniAdapter
 from jobsearch.adapters.dou import DouAdapter
 from jobsearch.adapters.euremotejobs import EuRemoteJobsAdapter
+from jobsearch.adapters.hnwhoishiring import HackerNewsWhoIsHiringAdapter
 from jobsearch.adapters.jobicy import JobicyAdapter
 from jobsearch.adapters.jobspresso import JobspressoAdapter
 from jobsearch.adapters.landingjobs import LandingJobsAdapter
@@ -25,6 +26,7 @@ ADAPTERS: dict[str, type[Adapter]] = {
     EuRemoteJobsAdapter.name: EuRemoteJobsAdapter,
     JobspressoAdapter.name: JobspressoAdapter,
     LandingJobsAdapter.name: LandingJobsAdapter,
+    HackerNewsWhoIsHiringAdapter.name: HackerNewsWhoIsHiringAdapter,
 }
 
 

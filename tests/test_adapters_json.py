@@ -6,6 +6,7 @@ from datetime import datetime
 from jobsearch import salary
 from jobsearch.adapters.base import JsonAdapter
 from jobsearch.adapters.euremotejobs import EuRemoteJobsAdapter
+from jobsearch.adapters.hnwhoishiring import HackerNewsWhoIsHiringAdapter
 from jobsearch.adapters.jobicy import JobicyAdapter
 from jobsearch.adapters.jobspresso import JobspressoAdapter
 from jobsearch.adapters.landingjobs import LandingJobsAdapter
@@ -593,3 +594,106 @@ def test_every_registered_adapter_is_reachable_by_its_own_name():
     from jobsearch.adapters import registry
     for name, cls in registry.ADAPTERS.items():
         assert registry.get(name).name == name == cls.name
+
+
+# --- HN "Who is hiring?": comments written to a convention, not a schema ---
+
+HN = pathlib.Path(__file__).parent / "fixtures" / "hnwhoishiring"
+
+
+def _hn(name: str) -> str:
+    return gzip.decompress((HN / name).read_bytes()).decode()
+
+
+def _comment(text: str, cid: int = 111) -> dict:
+    return {"id": cid, "author": "someone", "text": text}
+
+
+def test_hn_picks_the_hiring_thread_not_the_wants_to_be_hired_one():
+    # The same account posts both on the same day; only one is job adverts.
+    assert HackerNewsWhoIsHiringAdapter._latest_thread(_hn("search.json.gz")) == "49156683"
+
+
+def test_hn_returns_no_thread_rather_than_raising_when_the_search_is_empty():
+    assert HackerNewsWhoIsHiringAdapter._latest_thread('{"hits": []}') is None
+    assert HackerNewsWhoIsHiringAdapter._latest_thread("not json") is None
+
+
+def test_hn_parses_the_conventional_header_into_company_and_role():
+    record = HackerNewsWhoIsHiringAdapter._as_record(
+        _comment("Acme Corp | Senior PHP Engineer | Berlin | REMOTE | PHP, Laravel"),
+        "Acme Corp | Senior PHP Engineer | Berlin | REMOTE | PHP, Laravel")
+    assert record["company"] == "Acme Corp"
+    assert record["title"] == "Senior PHP Engineer"
+    assert record["arrangement_hint"] == "remote"
+    assert record["external_id"] == "hn-111"
+    assert record["url"] == "https://news.ycombinator.com/item?id=111"
+
+
+def test_hn_skips_prose_that_is_not_a_job_advert():
+    # Threads collect asides and questions. Without pipes there is no header to
+    # read, and inventing a title would file an opinion as a vacancy.
+    body = "Does anyone else find these threads useless for European candidates?"
+    assert HackerNewsWhoIsHiringAdapter._as_record(_comment(body), body) is None
+
+
+def test_hn_drops_a_url_only_segment_rather_than_calling_it_a_job_title():
+    body = "Seeq | https://seeq.com | Staff Engineer | REMOTE"
+    record = HackerNewsWhoIsHiringAdapter._as_record(_comment(body), body)
+    assert record["company"] == "Seeq"
+    assert record["title"] == "Staff Engineer"
+
+
+def test_hn_strips_a_url_appended_to_the_company_name():
+    body = "Snout https://snout.com/ | Multiple Engineering Roles | REMOTE"
+    record = HackerNewsWhoIsHiringAdapter._as_record(_comment(body), body)
+    assert record["company"] == "Snout"
+
+
+def test_hn_does_not_claim_remote_when_the_header_rules_it_out():
+    body = "Acme | Backend Engineer | New York | ONSITE ONLY | Go"
+    record = HackerNewsWhoIsHiringAdapter._as_record(_comment(body), body)
+    assert "arrangement_hint" not in record
+
+
+def test_hn_keyword_filter_targets_the_domain_and_keeps_the_volume_sane():
+    payload = _hn("thread.json.gz")
+    everything = HackerNewsWhoIsHiringAdapter._postings(payload, [])
+    targeted = HackerNewsWhoIsHiringAdapter._postings(
+        payload, ["PHP", "Laravel", "Symfony", "payments", "fintech"])
+    assert everything, "fixture should parse some postings"
+    assert 0 < len(targeted) < len(everything)
+
+
+def test_hn_postings_all_carry_the_fields_the_pipeline_requires():
+    postings = HackerNewsWhoIsHiringAdapter._postings(_hn("thread.json.gz"), [])
+    assert all(p["external_id"] and p["url"] and p["title"] and p["company"] for p in postings)
+    assert all(p["description"] for p in postings)
+
+
+def test_hn_html_comment_body_becomes_readable_text():
+    from jobsearch.adapters.hnwhoishiring import _plain
+    raw = "Acme | Dev | REMOTE<p>We use PHP &amp; MySQL.<p>Email <a href=\"x\">jobs@acme.com</a>"
+    text = _plain(raw)
+    assert "PHP & MySQL" in text
+    assert "jobs@acme.com" in text
+    assert "<p>" not in text and "<a" not in text
+
+
+def test_hn_fixture_parses_through_the_full_adapter(monkeypatch):
+    adapter = HackerNewsWhoIsHiringAdapter()
+    responses = [RawFetch("hnwhoishiring", _hn("search.json.gz").encode(), 200, datetime(2026, 8, 27)),
+                 RawFetch("hnwhoishiring", _hn("thread.json.gz").encode(), 200, datetime(2026, 8, 27))]
+    monkeypatch.setattr(adapter, "_get", lambda url, conditional: responses.pop(0))
+    result = adapter.parse(adapter.fetch({"keywords": ["payments", "fintech", "PHP"]}),
+                           json.loads((HN / "selectors.json").read_text()))
+    assert result.status == "ok"
+    assert all(p.company and p.title and p.description for p in result.postings)
+
+
+def test_hn_reports_empty_rather_than_broken_before_the_month_thread_exists(monkeypatch):
+    adapter = HackerNewsWhoIsHiringAdapter()
+    empty = RawFetch("hnwhoishiring", b'{"hits": []}', 200, datetime(2026, 8, 27))
+    monkeypatch.setattr(adapter, "_get", lambda url, conditional: empty)
+    result = adapter.parse(adapter.fetch({}), json.loads((HN / "selectors.json").read_text()))
+    assert result.status == "empty"

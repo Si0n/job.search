@@ -1,0 +1,14 @@
+{
+ "root": "",
+ "skip_first": false,
+ "fields": {
+  "external_id": "external_id",
+  "url": "url",
+  "title": "title",
+  "company": "company",
+  "location": "location",
+  "description": "description",
+  "arrangement_hint": "arrangement_hint",
+  "posted_by": "posted_by"
+ }
+}
