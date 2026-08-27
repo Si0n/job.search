@@ -1,0 +1,15 @@
+{
+ "root": "",
+ "skip_first": false,
+ "fields": {
+  "external_id": "id",
+  "url": "url",
+  "title": "title",
+  "company": "company",
+  "location": "location",
+  "salary_raw": "salary_raw",
+  "description": "description",
+  "arrangement_hint": "arrangement_hint",
+  "employment_hint": "type"
+ }
+}

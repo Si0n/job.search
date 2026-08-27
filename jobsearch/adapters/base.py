@@ -5,7 +5,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -382,3 +382,22 @@ class RssAdapter(JsonAdapter):
             etag=raw.etag,
             last_modified=raw.last_modified,
         )
+
+
+class WpJobFeedAdapter(RssAdapter):
+    """A board running WordPress Job Manager, whose `?feed=job_feed` endpoint
+    accepts the same query parameters as the site's own search form.
+
+    `search_keywords` is what makes these boards worth harvesting: unlike the
+    remote aggregators, which publish everything and leave the filtering to us,
+    these answer a keyword directly, so a run returns PHP roles rather than a
+    catalogue to sift. The plugin also namespaces its fields under
+    `job_listing:`, which rss_to_items already flattens.
+    """
+
+    def build_url(self, query: dict) -> str:
+        params = {"feed": "job_feed"}
+        for key in ("search_keywords", "search_region", "job_types"):
+            if value := (query or {}).get(key):
+                params[key] = value
+        return f"{self.base_url}/?{urlencode(params)}"

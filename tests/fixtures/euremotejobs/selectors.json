@@ -1,0 +1,14 @@
+{
+ "root": "",
+ "skip_first": false,
+ "fields": {
+  "external_id": "guid",
+  "url": "link",
+  "title": "title",
+  "company": "company",
+  "location": "location",
+  "salary_raw": "salary",
+  "description": "encoded",
+  "employment_hint": "job_type"
+ }
+}

@@ -5,7 +5,10 @@ from datetime import datetime
 
 from jobsearch import salary
 from jobsearch.adapters.base import JsonAdapter
+from jobsearch.adapters.euremotejobs import EuRemoteJobsAdapter
 from jobsearch.adapters.jobicy import JobicyAdapter
+from jobsearch.adapters.jobspresso import JobspressoAdapter
+from jobsearch.adapters.landingjobs import LandingJobsAdapter
 from jobsearch.adapters.larajobs import LaraJobsAdapter
 from jobsearch.adapters.remoteok import RemoteOkAdapter
 from jobsearch.adapters.nofluffjobs import NoFluffJobsAdapter
@@ -460,3 +463,133 @@ def test_nofluffjobs_postings_carry_a_description():
     result = NoFluffJobsAdapter().parse(_nofluff_fixture("valid.json.gz"), selectors)
     assert all(p.description for p in result.postings)
     assert any("Must have" in p.description for p in result.postings)
+
+
+# --- Keyword-searchable remote boards (euremotejobs, jobspresso, landing.jobs) ---
+
+def _fixture(source: str, name: str) -> RawFetch:
+    path = pathlib.Path(__file__).parent / "fixtures" / source / name
+    return RawFetch(source, gzip.decompress(path.read_bytes()), 200, datetime(2026, 8, 27))
+
+
+def _selectors(source: str) -> dict:
+    path = pathlib.Path(__file__).parent / "fixtures" / source / "selectors.json"
+    return json.loads(path.read_text())
+
+
+def test_wp_job_feed_url_carries_the_keyword_that_makes_these_boards_worth_harvesting():
+    url = EuRemoteJobsAdapter().build_url({"search_keywords": "php"})
+    assert url == "https://euremotejobs.com/?feed=job_feed&search_keywords=php"
+
+
+def test_wp_job_feed_url_omits_parameters_the_query_does_not_set():
+    assert EuRemoteJobsAdapter().build_url({}) == "https://euremotejobs.com/?feed=job_feed"
+
+
+def test_euremotejobs_valid_fixture_parses_with_company_and_location():
+    result = EuRemoteJobsAdapter().parse(_fixture("euremotejobs", "valid.json.gz"),
+                                         _selectors("euremotejobs"))
+    assert result.status == "ok"
+    assert len(result.postings) == 10
+    assert all(p.external_id and p.url and p.title and p.company for p in result.postings)
+    assert all(p.arrangement_hint == "remote" for p in result.postings)
+
+
+def test_euremotejobs_carries_a_posting_body_rather_than_a_stub():
+    result = EuRemoteJobsAdapter().parse(_fixture("euremotejobs", "valid.json.gz"),
+                                         _selectors("euremotejobs"))
+    # The reason this source outranks the aggregators on priority: LinkedIn and
+    # the boards that also list these roles hand over a title and little else.
+    assert all(len(p.description) > 200 for p in result.postings)
+
+
+def test_jobspresso_does_not_map_its_unreliable_job_type_to_employment_hint():
+    result = JobspressoAdapter().parse(_fixture("jobspresso", "valid.json.gz"),
+                                       _selectors("jobspresso"))
+    assert result.status == "ok"
+    php = [p for p in result.postings if "PHP" in p.title]
+    assert php, "fixture should contain the keyword-matched PHP roles"
+    # The board types this backend role "Marketing". Mapping it would hand the
+    # employment filter a claim the posting never made.
+    assert all(p.employment_hint is None for p in result.postings)
+    assert any(p.meta.get("job_type") == "Marketing" for p in result.postings)
+
+
+def test_both_wp_boards_classify_an_empty_feed_as_empty_not_broken():
+    for source, adapter in (("euremotejobs", EuRemoteJobsAdapter()),
+                            ("jobspresso", JobspressoAdapter())):
+        result = adapter.parse(_fixture(source, "empty.json.gz"), _selectors(source))
+        assert result.status == "empty", source
+
+
+def test_landingjobs_recovers_the_company_from_the_posting_url():
+    item = {"url": "https://landing.jobs/at/touchpoints-health/founding-engineer"}
+    LandingJobsAdapter._enrich(item)
+    assert item["company"] == "Touchpoints Health"
+
+
+def test_landingjobs_leaves_company_absent_when_the_url_shape_changes():
+    # Dropped by parse() with a diagnostic, rather than invented — a placeholder
+    # would later read as a real employer.
+    item = {"url": "https://landing.jobs/jobs/19622"}
+    LandingJobsAdapter._enrich(item)
+    assert "company" not in item
+
+
+def test_landingjobs_composes_a_salary_string_the_parser_understands():
+    item = {"gross_salary_low": 54000, "gross_salary_high": 69000, "currency_code": "EUR"}
+    LandingJobsAdapter._enrich(item)
+    assert item["salary_raw"] == "54000 - 69000 EUR/year"
+    parsed = salary.parse(item["salary_raw"])
+    assert (parsed.min, parsed.max, parsed.currency, parsed.period) == (54000, 69000, "EUR", "year")
+
+
+def test_landingjobs_handles_a_one_sided_salary_band():
+    item = {"gross_salary_low": 45000, "gross_salary_high": None, "currency_code": "EUR"}
+    LandingJobsAdapter._enrich(item)
+    assert item["salary_raw"] == "45000 EUR/year"
+
+
+def test_landingjobs_states_no_salary_when_the_api_gives_no_figures():
+    item = {"url": "https://landing.jobs/at/acme/dev"}
+    LandingJobsAdapter._enrich(item)
+    assert "salary_raw" not in item
+
+
+def test_landingjobs_marks_remote_postings_and_leaves_the_rest_unclaimed():
+    remote = {"remote": True}
+    onsite = {"remote": False}
+    LandingJobsAdapter._enrich(remote)
+    LandingJobsAdapter._enrich(onsite)
+    assert remote["arrangement_hint"] == "remote"
+    assert "arrangement_hint" not in onsite
+
+
+def test_landingjobs_builds_a_location_from_city_falling_back_to_country():
+    item = {"locations": [{"city": "Lisbon"}, {"country_code": "PT"}, {"city": "Lisbon"}]}
+    LandingJobsAdapter._enrich(item)
+    assert item["location"] == "Lisbon, PT"
+
+
+def test_landingjobs_enriches_the_raw_api_body_during_fetch(monkeypatch):
+    adapter = LandingJobsAdapter()
+    raw = _fixture("landingjobs", "valid.json.gz")
+    monkeypatch.setattr(adapter, "_get", lambda url, conditional: raw)
+    result = adapter.parse(adapter.fetch({"q": "php"}), _selectors("landingjobs"))
+    assert result.status == "ok"
+    assert all(p.company and p.description for p in result.postings)
+    assert any(p.salary_raw and salary.parse(p.salary_raw).min for p in result.postings)
+
+
+def test_landingjobs_leaves_a_non_json_body_for_parse_to_classify(monkeypatch):
+    adapter = LandingJobsAdapter()
+    raw = RawFetch("landingjobs", NOT_JSON, 200, datetime(2026, 8, 27))
+    monkeypatch.setattr(adapter, "_get", lambda url, conditional: raw)
+    assert adapter.fetch({}).body == NOT_JSON
+    assert adapter.parse(adapter.fetch({}), _selectors("landingjobs")).status == "broken"
+
+
+def test_every_registered_adapter_is_reachable_by_its_own_name():
+    from jobsearch.adapters import registry
+    for name, cls in registry.ADAPTERS.items():
+        assert registry.get(name).name == name == cls.name
