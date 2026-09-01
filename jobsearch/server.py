@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import ipaddress
 import json
 import re
@@ -12,6 +11,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+import pymysql.err
 
 from jobsearch import cv, dashboard, db, drafts, manual, store, tracker
 from jobsearch.profile import load_profile
@@ -371,18 +372,28 @@ def _make_handler(settings, port, lan: bool = False):
                     job_id = tracker.job_id_for_url(conn, posting["url"])
                 if job_id is None:
                     source = store.source_by_name(conn, "manual")
-                    # The URL's digest is the external id, so re-pasting the same
-                    # link updates that posting instead of creating a second one.
                     raw_posting = RawPosting(
-                        external_id=hashlib.sha256(posting["url"].encode()).hexdigest()[:32],
+                        external_id=tracker.manual_external_id(posting["url"]),
                         url=posting["url"], title=posting["title"], company=posting["company"],
                         description=posting["description"], location=posting["location"],
                         salary_raw=posting["salary_raw"], posted_at=posting["posted_at"])
                     job_id, _is_new = store.upsert_posting(
                         conn, source, raw_posting, None, settings.rates, datetime.now())
-                return tracker.create_application(conn, job_id, request["application"])
+                try:
+                    return tracker.create_application(conn, job_id, request["application"])
+                except pymysql.err.IntegrityError as exc:
+                    # applications.job_id is UNIQUE by design (one application per
+                    # job); MySQL error 1062 is a duplicate-key violation. Named
+                    # explicitly rather than left to the generic except below,
+                    # which otherwise turns this into an unexplained guess.
+                    if exc.args[0] != 1062:
+                        raise
+                    existing_id = tracker.application_id_for_job(conn, job_id)
+                    raise ValueError(
+                        f"job {job_id} is already tracked as application {existing_id}"
+                    ) from exc
 
-            self._with_conn(work, "could not create the application (already tracked?)")
+            self._with_conn(work, "could not create the application")
 
         def post_application_edit(self, match, parsed):
             raw = self._body()

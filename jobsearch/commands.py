@@ -236,7 +236,6 @@ def apply_url(args) -> dict:
     trailing-slash forms, and that is enough without adding redirect
     resolution just for the CLI's sake.
     """
-    import hashlib
     from datetime import datetime
 
     from jobsearch import manual, store, tracker
@@ -254,7 +253,7 @@ def apply_url(args) -> dict:
                                  "use the dashboard, which lets you correct them")
             source = store.source_by_name(conn, "manual")
             posting = RawPosting(
-                external_id=hashlib.sha256(found["url"].encode()).hexdigest()[:32],
+                external_id=tracker.manual_external_id(found["url"]),
                 url=found["url"], title=found["title"], company=found["company"],
                 description=found.get("description") or "", location=found.get("location"),
                 salary_raw=found.get("salary_raw"), posted_at=found.get("posted_at"))

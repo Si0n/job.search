@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timedelta
@@ -565,6 +566,21 @@ def job_id_for_url(conn, url: str) -> int | None:
         )
         row = cur.fetchone()
     return row["job_id"] if row else None
+
+
+def manual_external_id(url: str) -> str:
+    """The `manual` source's external id for a pasted URL. Hashing the URL
+    itself — not the fetched content — guarantees re-pasting the same link
+    always upserts the same job row instead of minting a twin with no score
+    and no draft."""
+    return hashlib.sha256(url.encode()).hexdigest()[:32]
+
+
+def application_id_for_job(conn, job_id: int) -> int | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM applications WHERE job_id = %s", (job_id,))
+        row = cur.fetchone()
+    return row["id"] if row else None
 
 
 EDITABLE = ("cover_letter", "why_company", "salary_expectation", "notice_period")
