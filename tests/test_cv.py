@@ -4,7 +4,7 @@ import json
 import pytest
 
 from jobsearch import cv
-from jobsearch.cv import MAX_BYTES, parse_upload, sniff, write_file
+from jobsearch.cv import MAX_BYTES, content_disposition, parse_upload, sniff, write_file
 
 PDF = b"%PDF-1.7\n1 0 obj\n<< >>\nendobj\n"
 DOCX = b"PK\x03\x04\x14\x00\x06\x00" + b"\x00" * 20
@@ -89,5 +89,24 @@ def test_the_stored_name_is_the_hash_not_the_uploaded_name(tmp_path):
 
 def test_a_filename_cannot_inject_a_response_header():
     filename, _ = parse_upload(upload(
-        filename='cv".pdf\r\nX-Evil: 1', content=base64.b64encode(PDF).decode()))
+        filename='cv".pdf\r\nX-Evil: 1\\', content=base64.b64encode(PDF).decode()))
     assert "\r" not in filename and '"' not in filename
+    assert "\n" not in filename and "\\" not in filename
+
+
+def test_a_non_ascii_filename_produces_a_header_value_latin1_can_carry():
+    # This is the exact property that broke: CPython's http.server encodes
+    # header values as latin-1, strict, and a Cyrillic filename raised there.
+    value = content_disposition("Дрозь_резюме.pdf")
+    value.encode("latin-1")  # must not raise
+    assert "filename*=UTF-8''%D0%94%D1%80%D0%BE%D0%B7%D1%8C_%D1%80%D0%B5%D0%B7%D1%8E%D0%BC%D0%B5.pdf" in value
+
+
+def test_an_ascii_filename_gets_a_plain_filename_parameter():
+    value = content_disposition("cv.pdf")
+    assert 'filename="cv.pdf"' in value
+
+
+def test_an_all_non_ascii_filename_still_gets_a_non_empty_ascii_fallback():
+    value = content_disposition("резюме")
+    assert 'filename="cv"' in value

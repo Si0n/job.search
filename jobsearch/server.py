@@ -431,7 +431,7 @@ def _make_handler(settings, port, lan: bool = False):
             # server's origin is the same one the dashboard runs on. A file that
             # renders as HTML here would run as the dashboard.
             self._send_bytes(200, data, row["content_type"], {
-                "Content-Disposition": f'attachment; filename="{row["filename"]}"',
+                "Content-Disposition": cv.content_disposition(row["filename"]),
                 "X-Content-Type-Options": "nosniff",
             })
 

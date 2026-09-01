@@ -7,6 +7,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 CV_DIR = "var/cv"
 MAX_BYTES = 10 * 1024 * 1024
@@ -76,6 +77,26 @@ def parse_upload(raw: str | bytes) -> tuple[str, bytes]:
     if not data:
         raise ValueError("content is empty")
     return filename.strip(), data
+
+
+def content_disposition(filename: str) -> str:
+    """A Content-Disposition value that never crashes the response.
+
+    CPython's http.server encodes header values as latin-1, strict — a stored
+    filename holds whatever script the owner's CV was named in, and Cyrillic
+    (or any codepoint past U+00FF) in a plain filename= would raise there. So
+    the ASCII fallback carries only what latin-1 can encode, for the clients
+    that read nothing else; filename*=UTF-8'' (RFC 6266) carries the real name
+    percent-encoded, for the browsers that do. This does not replace
+    parse_upload's strip of \\r \\n " \\\\ — that is still what stops header
+    injection; this only keeps a legitimate name from breaking the header.
+    """
+    ascii_name = "".join(c for c in filename if 32 <= ord(c) <= 126)
+    if not ascii_name:
+        extension = "".join(c for c in Path(filename).suffix if 32 <= ord(c) <= 126)
+        ascii_name = f"cv{extension}"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}"
 
 
 def write_file(data: bytes, extension: str, directory: str = CV_DIR) -> tuple[str, str]:
