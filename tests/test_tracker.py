@@ -4,8 +4,8 @@ from datetime import datetime
 import pytest
 
 from jobsearch.tracker import (
-    STAGE_KINDS, parse_answers, parse_application, parse_stage_request,
-    parse_transition, parse_when, slug_for,
+    STAGE_KINDS, build_stats, buckets, parse_answers, parse_application,
+    parse_stage_request, parse_transition, parse_when, slug_for,
 )
 
 NOW = datetime(2026, 9, 1, 14, 30)
@@ -167,3 +167,73 @@ def test_a_timezone_aware_datetime_is_normalized():
     result = parsed["next_action_at"]
     assert result.tzinfo is None
     assert result.astimezone() == aware
+
+
+APPS = [
+    {"id": 1, "applied_at": datetime(2026, 8, 31, 9, 0)},   # current week (Mon)
+    {"id": 2, "applied_at": datetime(2026, 8, 27, 9, 0)},   # previous week
+    {"id": 3, "applied_at": datetime(2026, 8, 31, 18, 0)},  # current week, no reply
+]
+EVENTS = [
+    {"application_id": 1, "kind": "applied", "occurred_at": datetime(2026, 8, 31, 9, 0),
+     "stage_slug": "applied", "stage_kind": "active", "stage_weight": 10},
+    {"application_id": 1, "kind": "stage", "occurred_at": datetime(2026, 9, 1, 10, 0),
+     "stage_slug": "tech_interview", "stage_kind": "active", "stage_weight": 40},
+    {"application_id": 2, "kind": "stage", "occurred_at": datetime(2026, 8, 28, 10, 0),
+     "stage_slug": "declined", "stage_kind": "lost", "stage_weight": 0},
+    {"application_id": 3, "kind": "applied", "occurred_at": datetime(2026, 8, 31, 18, 0),
+     "stage_slug": "applied", "stage_kind": "active", "stage_weight": 10},
+]
+
+
+def test_buckets_are_half_open_and_week_starts_on_monday():
+    # 2026-09-01 is a Tuesday.
+    windows = buckets(NOW)
+    assert windows["current_week"][0] == datetime(2026, 8, 31, 0, 0)
+    assert windows["previous_week"] == (datetime(2026, 8, 24), datetime(2026, 8, 31))
+    assert windows["previous_day"] == (datetime(2026, 8, 31), datetime(2026, 9, 1))
+    assert windows["current_month"][0] == datetime(2026, 9, 1, 0, 0)
+    assert windows["previous_month"] == (datetime(2026, 8, 1), datetime(2026, 9, 1))
+
+
+def test_buckets_handle_a_year_boundary():
+    windows = buckets(datetime(2027, 1, 4, 8, 0))     # a Monday
+    assert windows["current_week"][0] == datetime(2027, 1, 4, 0, 0)
+    assert windows["previous_month"] == (datetime(2026, 12, 1), datetime(2027, 1, 1))
+
+
+def test_sent_counts_by_applied_at():
+    stats = build_stats(APPS, EVENTS, NOW)
+    assert stats["current_week"]["sent"] == 2
+    assert stats["previous_week"]["sent"] == 1
+
+
+def test_advanced_counts_moves_into_active_or_won_stages():
+    stats = build_stats(APPS, EVENTS, NOW)
+    # The tech interview on the 1st, and both 'applied' events on the 31st.
+    assert stats["current_week"]["advanced"] == 3
+    assert stats["previous_week"]["advanced"] == 0
+
+
+def test_a_back_dated_event_lands_in_the_week_it_happened():
+    stats = build_stats(APPS, EVENTS, NOW)
+    assert stats["previous_week"]["lost"] == 1
+    assert stats["current_week"]["lost"] == 0
+
+
+def test_response_rate_is_a_cohort_of_the_bucket_that_was_sent():
+    stats = build_stats(APPS, EVENTS, NOW)
+    # Of the two sent this week, only #1 ever left "applied".
+    assert stats["current_week"]["response_rate"] == 0.5
+
+
+def test_response_rate_is_none_when_nothing_was_sent():
+    # None, not 0.0 — an empty cohort has no rate, and 0% would read as failure.
+    assert build_stats([], [], NOW)["previous_day"]["response_rate"] is None
+
+
+def test_a_ghosting_is_not_a_response():
+    events = [{"application_id": 2, "kind": "stage",
+               "occurred_at": datetime(2026, 8, 29), "stage_slug": "ghosted",
+               "stage_kind": "lost", "stage_weight": 0}]
+    assert build_stats([APPS[1]], events, NOW)["previous_week"]["response_rate"] == 0.0

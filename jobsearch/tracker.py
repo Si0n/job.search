@@ -187,3 +187,59 @@ def parse_application(raw: str | bytes, *, now: datetime | None = None) -> dict:
             "answers": parse_answers(payload.get("answers")),
         },
     }
+
+
+def _when(value) -> datetime:
+    """MySQL gives datetimes; JSON fixtures and query strings give ISO strings."""
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace(" ", "T"))
+
+
+def buckets(now: datetime) -> dict[str, tuple[datetime, datetime]]:
+    """The five reporting windows, half-open as [start, end). Weeks start Monday."""
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week = today - timedelta(days=today.weekday())
+    month = today.replace(day=1)
+    return {
+        "previous_day": (today - timedelta(days=1), today),
+        "current_week": (week, now),
+        "previous_week": (week - timedelta(days=7), week),
+        "current_month": (month, now),
+        # Step back one day from the 1st to land in the previous month, whatever
+        # its length, then take that month's 1st. No calendar arithmetic needed.
+        "previous_month": ((month - timedelta(days=1)).replace(day=1), month),
+    }
+
+
+def build_stats(applications: list[dict], events: list[dict], now: datetime) -> dict:
+    """Pure. Five metrics per window.
+
+    Events are counted by `occurred_at`, never `created_at`: recording Thursday's
+    recruiter call on Monday must move Thursday's number. `response_rate` is the
+    exception — it is a cohort measure over the applications SENT in the window,
+    evaluated now, so last month's figure keeps rising as replies arrive.
+    """
+    by_application: dict[int, list[dict]] = {}
+    for event in events:
+        by_application.setdefault(event["application_id"], []).append(event)
+
+    out = {}
+    for name, (start, end) in buckets(now).items():
+        sent = [a for a in applications if start <= _when(a["applied_at"]) < end]
+        window = [e for e in events if start <= _when(e["occurred_at"]) < end]
+        responded = sum(
+            1 for a in sent
+            if any(e.get("stage_slug") not in NO_RESPONSE
+                   for e in by_application.get(a["id"], []))
+        )
+        out[name] = {
+            "start": start,
+            "end": end,
+            "sent": len(sent),
+            "advanced": sum(1 for e in window if e.get("stage_kind") in ("active", "won")),
+            "offers": sum(1 for e in window if e.get("stage_kind") == "won"),
+            "lost": sum(1 for e in window if e.get("stage_kind") == "lost"),
+            "response_rate": round(responded / len(sent), 2) if sent else None,
+        }
+    return out
