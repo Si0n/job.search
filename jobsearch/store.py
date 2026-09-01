@@ -223,19 +223,27 @@ def upsert_posting(conn, source: dict, posting: RawPosting, raw_fetch_id: int | 
 
         if existing:
             with conn.cursor() as cur:
+                # COALESCE, not a plain assignment: a board that states a date
+                # one run and omits it the next must not erase what it already
+                # told us. Refreshing it at all is what backfills rows stored
+                # before their adapter learned to read the field.
                 if existing["description_hash"] != desc_hash:
                     cur.execute(
                         "UPDATE job_sources SET description=%s, description_hash=%s, "
                         "salary_raw=%s, url=%s, raw_fetch_id=%s, source_meta=%s, "
+                        "posted_at=COALESCE(%s, posted_at), "
                         "last_seen_at=%s, missed_runs=0, inactive_at=NULL WHERE id=%s",
                         (description, desc_hash, posting.salary_raw, posting.url,
-                         raw_fetch_id, json.dumps(posting.meta or {}), now, existing["id"]),
+                         raw_fetch_id, json.dumps(posting.meta or {}), posting.posted_at,
+                         now, existing["id"]),
                     )
                 else:
                     cur.execute(
                         "UPDATE job_sources SET last_seen_at=%s, missed_runs=0, "
-                        "inactive_at=NULL, source_meta=%s WHERE id=%s",
-                        (now, json.dumps(posting.meta or {}), existing["id"]),
+                        "inactive_at=NULL, source_meta=%s, "
+                        "posted_at=COALESCE(%s, posted_at) WHERE id=%s",
+                        (now, json.dumps(posting.meta or {}), posting.posted_at,
+                         existing["id"]),
                     )
             job_id = existing["job_id"]
             is_new = False

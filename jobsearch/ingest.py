@@ -4,6 +4,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 from jobsearch import store
+from jobsearch.adapters.base import parse_posted_at
 from jobsearch.models import RawPosting
 
 REQUIRED = ("external_id", "url", "title", "company")
@@ -76,6 +77,7 @@ def run(conn, settings, source_name: str, payload: list[dict]) -> dict:
                 description=item.get("description") or "",
                 location=item.get("location"),
                 salary_raw=item.get("salary_raw"),
+                posted_at=parse_posted_at(item.get("posted_at")),
                 arrangement_hint=item.get("arrangement_hint"),
                 employment_hint=item.get("employment_hint"),
             )

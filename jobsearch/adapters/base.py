@@ -5,6 +5,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode, urljoin, urlparse
 
 import httpx
@@ -87,6 +88,61 @@ class Adapter(ABC):
             etag=response.headers.get("ETag"),
             last_modified=response.headers.get("Last-Modified"),
         )
+
+
+def parse_posted_at(value) -> datetime | None:
+    """Normalise a board's stated publication date to a naive local datetime.
+
+    Every other timestamp in this codebase — first_seen_at, last_seen_at, the
+    `now` the filter measures age against — is naive local, and the column is a
+    plain DATETIME. A tz-aware value therefore has to be converted rather than
+    stored as it arrives: MySQL drops the offset on write, so a +13:00
+    timestamp would land in the database reading thirteen hours into the future
+    and score as fresher than a posting published the same moment in UTC.
+
+    Three wire formats cover every dated source here: ISO 8601 (jobicy,
+    remotive, landing.jobs), RFC 2822 (the WordPress RSS boards — larajobs,
+    euremotejobs, jobspresso), and epoch seconds.
+
+    Anything unparseable returns None, which filters.py treats as absent data
+    and lets through. That direction is deliberate: a board changing its date
+    format quietly widens the age window, where the opposite default would
+    silently empty the queue and look exactly like a dead source.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        parsed = _from_epoch(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        # 9 digits, not just isdigit(): a bare "2026" is a year someone put in a
+        # date field, and reading it as epoch seconds dates the posting to 1970.
+        if text.isdigit() and len(text) >= 9:
+            parsed = _from_epoch(text)
+        else:
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                try:
+                    parsed = parsedate_to_datetime(text)
+                except (TypeError, ValueError):
+                    return None
+    if parsed is None:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone().replace(tzinfo=None)
+    return parsed
+
+
+def _from_epoch(value) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(int(value))
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def extract_field(node, spec: dict, base_url: str) -> str | None:
@@ -195,6 +251,7 @@ class HtmlAdapter(Adapter):
                 description=values.get("description") or "",
                 location=values.get("location"),
                 salary_raw=values.get("salary_raw"),
+                posted_at=parse_posted_at(values.get("posted_at")),
                 arrangement_hint=values.get("arrangement_hint"),
                 employment_hint=values.get("employment_hint"),
             )
@@ -331,6 +388,7 @@ class JsonAdapter(Adapter):
                 description=values.get("description") or "",
                 location=values.get("location"),
                 salary_raw=values.get("salary_raw"),
+                posted_at=parse_posted_at(values.get("posted_at")),
                 arrangement_hint=values.get("arrangement_hint"),
                 employment_hint=values.get("employment_hint"),
             ), item))

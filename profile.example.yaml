@@ -18,7 +18,14 @@ identity:
   location: City, Country
   timezone: Europe/Warsaw
   linkedin: https://www.linkedin.com/in/your-handle/
+  github: https://github.com/your-handle
   years_experience: 10
+  # Where you are already allowed to work, so "no sponsorship offered" stops
+  # reading as a blocker. Omit it if it does not apply to you.
+  work_authorization: EU
+  # Omit while you are still employed. Set it once you are available, so an
+  # "immediate start" posting scores as a plus rather than a risk.
+  available_from: 2026-01-01
   languages:
     - Ukrainian (native)
     - Russian (native)
@@ -89,6 +96,8 @@ filters:
   require_arrangement: [remote]
   require_employment: [full-time, contract, part-time]
   min_salary_monthly_eur: 0   # 0 disables the floor
+  salary_floor_exempt_employment: [part-time]   # these state a part-month figure; the floor would misjudge them
+  max_age_days: 0             # 0 disables the age cut; postings with no stated date always pass
   exclude_keywords: []
   exclude_companies: []
   languages_required: []

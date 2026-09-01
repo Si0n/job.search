@@ -15,7 +15,7 @@ class FilterVerdict:
 PASSED = FilterVerdict(True, None)
 
 
-def evaluate(job: dict, rules: dict) -> FilterVerdict:
+def evaluate(job: dict, rules: dict, now: datetime | None = None) -> FilterVerdict:
     """Hard rules only. Absent data never fails a rule.
 
     Roughly two-thirds of postings on these boards carry no salary, no explicit
@@ -24,6 +24,16 @@ def evaluate(job: dict, rules: dict) -> FilterVerdict:
     failure that looks like a broken scraper.
     """
     text = (job.get("text") or "").lower()
+
+    # Boards re-list a posting for as long as it is open, so a job harvested
+    # today may have been published months ago — first_seen_at measures when we
+    # noticed it, not how old it is, and cannot stand in for this.
+    max_age = rules.get("max_age_days")
+    posted = job.get("posted_at")
+    if max_age and posted is not None:
+        age = ((now or datetime.now()) - posted).days
+        if age > max_age:
+            return FilterVerdict(False, f"posted {age}d ago, older than {max_age}d")
 
     allowed = rules.get("require_arrangement")
     arrangement = job.get("arrangement", "unknown")
@@ -35,9 +45,15 @@ def evaluate(job: dict, rules: dict) -> FilterVerdict:
     if allowed and employment != "unknown" and employment not in allowed:
         return FilterVerdict(False, f"employment '{employment}' not in {allowed}")
 
+    # The floor is a full-month figure, so it is only a fair comparison against
+    # employment that bills a full month. A part-time posting states a smaller
+    # number because it buys fewer hours, not because it pays badly, and no
+    # board publishes the fraction — so there is nothing to pro-rate by and the
+    # honest move is to let scoring's compensation_fit judge it instead.
     floor = rules.get("min_salary_monthly_eur")
     amount = job.get("salary_monthly_eur")
-    if floor and amount is not None and amount < floor:
+    exempt = rules.get("salary_floor_exempt_employment") or []
+    if floor and amount is not None and employment not in exempt and amount < floor:
         return FilterVerdict(False, f"salary €{amount}/mo below floor €{floor}/mo")
 
     excluded = normalize.company(job.get("company") or "")
@@ -71,6 +87,10 @@ def apply(conn, profile) -> dict:
         cur.execute(
             "SELECT j.id, j.arrangement, j.employment_type, j.salary_monthly_eur, "
             "j.salary_source, j.company, "
+            # MAX, not MIN: a job merged from several boards is as fresh as the
+            # most recent publication of it. Taking the oldest would age a job
+            # out on the strength of whichever board listed it first.
+            "MAX(js.posted_at) AS posted_at, "
             "CONCAT_WS(' ', j.title, GROUP_CONCAT(js.description SEPARATOR ' ')) AS text "
             "FROM jobs j LEFT JOIN job_sources js ON js.job_id = j.id "
             "WHERE j.inactive_at IS NULL GROUP BY j.id"
@@ -80,7 +100,7 @@ def apply(conn, profile) -> dict:
     filtered = passed = 0
     with conn.cursor() as cur:
         for job in jobs:
-            verdict = evaluate(job, rules)
+            verdict = evaluate(job, rules, now)
             if verdict.passed:
                 cur.execute(
                     "UPDATE jobs SET filtered_at=NULL, filter_reason=NULL WHERE id=%s",

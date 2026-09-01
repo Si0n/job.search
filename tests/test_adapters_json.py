@@ -3,8 +3,11 @@ import json
 import pathlib
 from datetime import datetime
 
-from jobsearch import salary
-from jobsearch.adapters.base import JsonAdapter
+import httpx
+
+from jobsearch import normalize, salary
+from jobsearch.adapters.ats import AtsAdapter
+from jobsearch.adapters.base import JsonAdapter, parse_posted_at
 from jobsearch.adapters.euremotejobs import EuRemoteJobsAdapter
 from jobsearch.adapters.hnwhoishiring import HackerNewsWhoIsHiringAdapter
 from jobsearch.adapters.jobicy import JobicyAdapter
@@ -696,4 +699,185 @@ def test_hn_reports_empty_rather_than_broken_before_the_month_thread_exists(monk
     empty = RawFetch("hnwhoishiring", b'{"hits": []}', 200, datetime(2026, 8, 27))
     monkeypatch.setattr(adapter, "_get", lambda url, conditional: empty)
     result = adapter.parse(adapter.fetch({}), json.loads((HN / "selectors.json").read_text()))
+    assert result.status == "empty"
+
+
+# --- Company ATS boards: many employers behind one source ---
+
+ATS = pathlib.Path(__file__).parent / "fixtures" / "ats"
+
+ATS_QUERY = {
+    "greenhouse": {"gocardless": "GoCardless"},
+    "ashby": {"unit": "Unit"},
+    "lever": {"finix": "Finix"},
+    "keywords": ["PHP", "Laravel", "Symfony"],
+    "fallback_keywords": ["backend", "software engineer",
+                          "software development engineer", "principal engineer"],
+    "exclude_title_keywords": ["frontend", "support", "sales", "manager"],
+}
+
+
+def _ats(name: str) -> str:
+    return gzip.decompress((ATS / name).read_bytes()).decode()
+
+
+def _ats_records(vendor: str, slug: str, company: str, fixture: str) -> list[dict]:
+    return AtsAdapter._records(vendor, slug, company, _ats(fixture))
+
+
+def test_ats_builds_the_endpoint_for_each_vendor():
+    build = AtsAdapter().build_url
+    assert build({"vendor": "greenhouse", "slug": "monzo"}) == (
+        "https://boards-api.greenhouse.io/v1/boards/monzo/jobs?content=true")
+    assert build({"vendor": "ashby", "slug": "unit"}) == (
+        "https://api.ashbyhq.com/posting-api/job-board/unit")
+    assert build({"vendor": "lever", "slug": "finix"}) == (
+        "https://api.lever.co/v0/postings/finix?mode=json")
+
+
+def test_ats_every_vendor_yields_the_fields_the_pipeline_requires():
+    for vendor, slug, company, fixture in (
+        ("greenhouse", "gocardless", "GoCardless", "greenhouse.json.gz"),
+        ("ashby", "unit", "Unit", "ashby.json.gz"),
+        ("lever", "finix", "Finix", "lever.json.gz"),
+    ):
+        records = _ats_records(vendor, slug, company, fixture)
+        assert records, f"{vendor} fixture should yield records"
+        for record in records:
+            assert record["external_id"] and record["url"]
+            assert record["title"] and record["company"]
+
+
+def test_ats_company_comes_from_config_not_the_vendor_field():
+    # Greenhouse publishes a per-job company_name that is a department on some
+    # boards ("Wise Worksite Field Sales", "Form3 - External"). The configured
+    # display name is the only one that identifies the employer consistently.
+    records = _ats_records("greenhouse", "gocardless", "GoCardless Ltd", "greenhouse.json.gz")
+    assert {r["company"] for r in records} == {"GoCardless Ltd"}
+
+
+def test_ats_external_ids_are_namespaced_so_two_boards_cannot_collide():
+    records = _ats_records("ashby", "unit", "Unit", "ashby.json.gz")
+    assert all(r["external_id"].startswith("ashby-unit-") for r in records)
+
+
+def test_ats_greenhouse_entity_encoded_content_becomes_readable_html():
+    # Greenhouse escapes its HTML a second time: the body arrives as "&lt;div&gt;".
+    # Left alone, normalize.description finds no tags to strip and the markup
+    # survives into the description as visible text.
+    records = _ats_records("greenhouse", "gocardless", "GoCardless", "greenhouse.json.gz")
+    body = next(r["description"] for r in records)
+    assert "&lt;" not in body
+    assert normalize.description(body).strip()
+
+
+def test_ats_ashby_employment_type_is_translated_for_the_normaliser():
+    # Ashby writes "FullTime"; normalize.employment matches "full-time" or
+    # "full time" and would read the raw value as unknown.
+    records = _ats_records("ashby", "unit", "Unit", "ashby.json.gz")
+    hints = {r.get("employment_hint") for r in records}
+    assert "full-time" in hints
+    assert all(normalize.employment(h, "") == "full-time" for h in hints if h)
+
+
+def test_ats_lever_millisecond_timestamps_are_not_read_as_the_year_58000():
+    # Lever publishes createdAt in milliseconds. Thirteen digits fed to
+    # parse_posted_at overflow and the date is lost entirely.
+    records = _ats_records("lever", "finix", "Finix", "lever.json.gz")
+    dates = [parse_posted_at(r["posted_at"]) for r in records if r.get("posted_at")]
+    assert dates, "lever fixture should carry publication dates"
+    assert all(2015 < d.year < 2100 for d in dates)
+
+
+def test_ats_strong_keyword_matches_anywhere_in_the_posting():
+    record = {"title": "Senior Engineer", "description": "You will write Laravel."}
+    assert AtsAdapter._wanted(record, ["PHP", "Laravel"], [])
+
+
+def test_ats_fallback_keywords_match_the_title_only():
+    # Every engineering job description at a payments company says "backend"
+    # somewhere. Matching the body on the fallback list would admit the whole
+    # board, which is the failure that took remoteok and weworkremotely offline.
+    sales = {"title": "Enterprise Account Executive",
+             "description": "Sell our backend payments platform."}
+    engineer = {"title": "Senior Backend Engineer", "description": "Payments."}
+    assert not AtsAdapter._wanted(sales, ["PHP"], ["backend"])
+    assert AtsAdapter._wanted(engineer, ["PHP"], ["backend"])
+
+
+def test_ats_filter_keeps_engineering_roles_and_drops_the_rest_of_the_board():
+    records = _ats_records("lever", "finix", "Finix", "lever.json.gz")
+    kept = [r for r in records
+            if AtsAdapter._wanted(r, ATS_QUERY["keywords"], ATS_QUERY["fallback_keywords"],
+                                  ATS_QUERY["exclude_title_keywords"])]
+    titles = {r["title"] for r in kept}
+    assert "Senior Software Engineer" in titles
+    assert "Enterprise Account Executive" not in titles
+    assert "Senior Frontend Engineer" not in titles
+    assert 0 < len(kept) < len(records)
+
+
+def test_ats_excluded_titles_are_vetoed_even_when_the_stack_matches():
+    # Mollie's board carries both an "Application Engineer II" and a "Technical
+    # Support Specialist", and both name PHP in the body. Only one is the job.
+    support = {"title": "Technical Support Specialist",
+               "description": "Supporting merchants on our PHP platform."}
+    engineer = {"title": "Senior Application Engineer",
+                "description": "Our platform is PHP."}
+    assert not AtsAdapter._wanted(support, ["PHP"], ["backend"], ["support"])
+    assert AtsAdapter._wanted(engineer, ["PHP"], ["backend"], ["support"])
+
+
+def test_ats_exclusion_beats_a_fallback_title_match():
+    role = {"title": "Frontend Backend Platform Manager", "description": ""}
+    assert not AtsAdapter._wanted(role, [], ["backend"], ["manager"])
+
+
+def test_ats_a_posting_without_a_url_is_dropped_rather_than_invented():
+    payload = json.dumps({"jobs": [
+        {"id": "1", "title": "Senior Backend Engineer", "jobUrl": "https://x/1"},
+        {"id": "2", "title": "Senior Backend Engineer"},
+    ]})
+    records = AtsAdapter._records("ashby", "unit", "Unit", payload)
+    assert [r["external_id"] for r in records] == ["ashby-unit-1"]
+
+
+def test_ats_a_board_that_fails_does_not_take_the_other_boards_with_it(monkeypatch):
+    # Sixty-odd boards behind one source: one 404 must not cost the whole run.
+    adapter = AtsAdapter()
+
+    def flaky(url, conditional):
+        if "gocardless" in url:
+            raise httpx.HTTPError("boom")
+        return RawFetch("ats", _ats("ashby.json.gz").encode(), 200, datetime(2026, 8, 31))
+
+    monkeypatch.setattr(adapter, "_get", flaky)
+    raw = adapter.fetch(ATS_QUERY)
+    items = json.loads(raw.text())
+    assert items, "the healthy board should still contribute"
+    assert {i["company"] for i in items} == {"Unit"}
+
+
+def test_ats_fixtures_parse_through_the_full_adapter(monkeypatch):
+    adapter = AtsAdapter()
+    bodies = {"gocardless": "greenhouse.json.gz", "unit": "ashby.json.gz",
+              "finix": "lever.json.gz"}
+
+    def serve(url, conditional):
+        name = next(f for slug, f in bodies.items() if slug in url)
+        return RawFetch("ats", _ats(name).encode(), 200, datetime(2026, 8, 31))
+
+    monkeypatch.setattr(adapter, "_get", serve)
+    result = adapter.parse(adapter.fetch(ATS_QUERY),
+                           json.loads((ATS / "selectors.json").read_text()))
+    assert result.status == "ok"
+    assert all(p.company and p.title and p.url for p in result.postings)
+    assert {p.company for p in result.postings} <= {"GoCardless", "Unit", "Finix"}
+
+
+def test_ats_an_empty_configuration_is_empty_not_broken(monkeypatch):
+    adapter = AtsAdapter()
+    monkeypatch.setattr(adapter, "_get", lambda url, conditional: None)
+    result = adapter.parse(adapter.fetch({}),
+                           json.loads((ATS / "selectors.json").read_text()))
     assert result.status == "empty"
