@@ -4,31 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>jobsearch</title>
+<link rel="stylesheet" href="/static/app.css">
 <style>
-:root {
-  --bg:#f6f7f9; --card:#fff; --ink:#12151a; --muted:#6b7280; --line:#e4e7ec;
-  --accent:#2563eb; --good:#15803d; --warn:#b45309; --bad:#b91c1c;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:#0f1115; --card:#171a21; --ink:#e6e8ec; --muted:#9aa3b2; --line:#262b36;
-    --accent:#60a5fa; --good:#4ade80; --warn:#fbbf24; --bad:#f87171;
-  }
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-header{position:sticky;top:0;z-index:5;background:var(--bg);
-  border-bottom:1px solid var(--line);padding:14px 20px}
-h1{margin:0 0 10px;font-size:17px;letter-spacing:-.01em}
-.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .controls input,.controls select{background:var(--card);color:var(--ink);
   border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit}
 .controls input[type=search]{min-width:230px;flex:1}
 #count{color:var(--muted);font-size:13px;margin-left:auto}
 main{padding:18px 20px;max-width:1000px;margin:0 auto;
   display:flex;flex-direction:column;gap:12px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px}
 .card.new{border-left:3px solid var(--accent)}
 .top{display:flex;gap:12px;align-items:flex-start}
 .score{flex:0 0 46px;height:46px;border-radius:9px;display:grid;place-items:center;
@@ -43,8 +26,6 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;
 .meta{color:var(--muted);font-size:13px;margin-top:2px}
 .verdict{margin:10px 0 0}
 .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
-.tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);
-  color:var(--muted)}
 .tag.concern{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)}
 .dims{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
 .tech{font-size:11.5px;padding:1px 7px;border-radius:5px;font-weight:600;
@@ -64,19 +45,6 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;
   border-color:color-mix(in srgb,var(--warn) 55%,transparent);
   background:color-mix(in srgb,var(--warn) 12%,transparent)}
 .lang.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}
-#backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;
-  transition:opacity .18s;z-index:8}
-#backdrop.on{opacity:1;pointer-events:auto}
-#panel{position:fixed;top:0;right:0;height:100%;width:min(560px,46vw);z-index:9;
-  background:var(--card);border-left:1px solid var(--line);
-  transform:translateX(100%);transition:transform .2s ease;
-  display:flex;flex-direction:column;overflow:hidden}
-#panel.open{transform:none}
-@media (max-width:820px){#panel{width:100%}}
-.p-head{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;
-  align-items:flex-start}
-.p-head .t{font-weight:650;font-size:14.5px;flex:1;line-height:1.35}
-.p-body{padding:14px 16px;overflow:auto;flex:1}
 .p-note{padding:12px 16px;border-top:1px solid var(--line);background:var(--bg)}
 .p-note textarea{width:100%;background:var(--card);color:var(--ink);font:inherit;
   font-size:13px;border:1px solid var(--line);border-radius:7px;padding:8px;resize:vertical;
@@ -136,7 +104,6 @@ details{margin-top:10px}
 summary{cursor:pointer;color:var(--muted);font-size:13px}
 pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
   max-height:340px;overflow:auto}
-.empty{color:var(--muted);text-align:center;padding:50px 0}
 </style>
 </head>
 <body>
@@ -167,6 +134,7 @@ pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
     <span id="count"></span>
     <span style="font-size:12px;color:var(--muted)"><kbd>j</kbd><kbd>k</kbd> move
       <kbd>i</kbd>nterested <kbd>a</kbd>pplied <kbd>s</kbd>kip <kbd>o</kbd>pen <kbd>d</kbd>raft</span>
+    <a class="nav" href="/applications">applications →</a>
   </div>
   <div class="today" id="today"></div>
 </header>
@@ -187,28 +155,11 @@ pre.desc{white-space:pre-wrap;font:inherit;color:var(--muted);margin:8px 0 0;
     </div>
   </div>
 </aside>
+<script src="/static/util.js"></script>
 <script>
 let JOBS = [];
 let SHOWN = [];
 let sel = 0;
-const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
-  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const age = ts => {
-  if (!ts) return "unknown";
-  const h = (Date.now() - new Date(String(ts).replace(" ", "T")).getTime()) / 36e5;
-  if (!isFinite(h) || h < 0) return "unknown";
-  if (h < 24) return `${Math.max(1, Math.round(h))}h`;
-  const d = Math.round(h / 24);
-  return d < 30 ? `${d}d` : `${Math.round(d / 30)}mo`;
-};
-const ageCls = ts => {
-  if (!ts) return "";
-  const h = (Date.now() - new Date(String(ts).replace(" ", "T")).getTime()) / 36e5;
-  if (!isFinite(h) || h < 0) return "";
-  return h < 48 ? "fresh" : h > 24 * 21 ? "stale" : "";
-};
-const safeUrl = u => /^https?:\/\//i.test(String(u ?? "")) ? String(u) : "#";
 
 async function load() {
   const p = new URLSearchParams();

@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>applications</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+main{padding:18px 20px;max-width:1000px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:12px;align-items:baseline}
+.row .co{font-weight:650}
+.row .ti{color:var(--muted);font-size:13.5px}
+.right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.act{font-size:12.5px;color:var(--muted);margin-top:6px}
+form.new{display:none;gap:8px;flex-direction:column;background:var(--card);
+  border:1px solid var(--line);border-radius:11px;padding:14px}
+form.new.on{display:flex}
+form.new input,form.new textarea,form.new select{background:var(--bg);color:var(--ink);
+  border:1px solid var(--line);border-radius:7px;padding:7px 9px;font:inherit;width:100%}
+form.new textarea{min-height:70px;resize:vertical}
+.warn{color:var(--warn);font-size:12.5px}
+.tl{border-left:2px solid var(--line);padding-left:12px;margin-top:12px}
+.tl .ev{margin-bottom:12px}
+.tl .when{font-size:11.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>applications</h1>
+  <div class="controls">
+    <div class="tabs">
+      <button id="tab-list" class="on">List</button>
+      <button id="tab-activity">Activity</button>
+    </div>
+    <select id="kind">
+      <option value="">all stages</option>
+      <option value="active">active</option>
+      <option value="won">won</option>
+      <option value="lost">lost</option>
+    </select>
+    <label><input type="checkbox" id="attention"> needs attention</label>
+    <input type="search" id="q" placeholder="company or title">
+    <button id="add">+ add by URL</button>
+    <a class="nav" href="/">← inbox</a>
+  </div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<main>
+  <form class="new" id="new">
+    <input id="u-url" placeholder="https://company.com/careers/backend-engineer">
+    <div class="row"><button type="button" id="u-look">look up</button>
+      <span class="warn" id="u-warn"></span></div>
+    <input id="u-title" placeholder="title"><input id="u-company" placeholder="company">
+    <input id="u-applied" type="date"><textarea id="u-cover" placeholder="cover letter"></textarea>
+    <textarea id="u-why" placeholder="why this company"></textarea>
+    <div class="row"><select id="u-cv"></select>
+      <input type="file" id="u-file" accept=".pdf,.docx,.txt"></div>
+    <div class="row"><button type="button" id="u-save">save application</button>
+      <span class="warn" id="u-err"></span></div>
+  </form>
+  <div id="list"></div>
+</main>
+
+<div id="backdrop"></div>
+<aside id="panel"><div class="p-head"><div class="t" id="p-title"></div>
+  <button id="p-close">close</button></div>
+  <div class="p-body" id="p-body"></div></aside>
+
+<script src="/static/util.js"></script>
+<script>
+let APPS = [], STAGES = [], CVS = [], VIEW = "list", OPEN = null;
+
+const fmtDate = s => s ? String(s).slice(0, 10) : "";
+
+async function boot() {
+  [STAGES, CVS] = await Promise.all([getJSON("/api/stages"), getJSON("/api/cvs")]);
+  $("#u-cv").innerHTML = '<option value="">no CV</option>' +
+    CVS.map(c => `<option value="${c.id}">${esc(c.filename)}</option>`).join("");
+  $("#u-applied").value = new Date().toISOString().slice(0, 10);
+  await refresh();
+}
+
+async function refresh() {
+  const kind = $("#kind").value;
+  const [apps, stats] = await Promise.all([
+    getJSON("/api/applications" + (kind ? "?kind=" + kind : "")),
+    getJSON("/api/tracker-stats")]);
+  APPS = apps;
+  renderStats(stats);
+  VIEW === "list" ? renderList() : renderActivity();
+}
+
+function renderStats(stats) {
+  const cell = (name, label) => {
+    const s = stats[name];
+    const rate = s.response_rate === null ? "—" : Math.round(s.response_rate * 100) + "%";
+    return `<span>${label}: <b>${s.sent}</b> sent · <b>${s.advanced}</b> advanced ·
+            <b>${s.offers}</b> offers · <b>${s.lost}</b> lost · replied <b>${rate}</b></span>`;
+  };
+  $("#stats").innerHTML = [
+    cell("previous_day", "yesterday"), cell("current_week", "this week"),
+    cell("previous_week", "last week"), cell("current_month", "this month"),
+    cell("previous_month", "last month")].join("");
+}
+
+function visible() {
+  const q = $("#q").value.toLowerCase().trim();
+  const attention = $("#attention").checked;
+  return APPS.filter(a =>
+    (!q || (a.company + " " + a.title).toLowerCase().includes(q)) &&
+    (!attention || (a.next_action && a.next_action.due !== "later")));
+}
+
+function renderList() {
+  const rows = visible();
+  $("#list").innerHTML = rows.length ? rows.map(card).join("")
+    : '<div class="empty">No applications yet. Add one with “+ add by URL”, or mark a job applied in the inbox.</div>';
+  $("#list").querySelectorAll("article.card").forEach(el =>
+    el.addEventListener("click", () => openPanel(Number(el.dataset.id))));
+}
+
+function card(a) {
+  const action = a.next_action ? `<div class="act due-${a.next_action.due}">
+      ${esc(a.next_action.text || "next step")}${a.next_action.at ? " · " + fmtDate(a.next_action.at) : ""}
+      ${a.next_action.due === "overdue" ? "· overdue" : a.next_action.due === "today" ? "· today" : ""}
+    </div>` : "";
+  return `<article class="card" data-id="${a.id}">
+    <div class="row"><span class="co">${esc(a.company)}</span>
+      <span class="ti">${esc(a.title)}</span>
+      <span class="right">
+        ${a.score !== null && a.score !== undefined ? `<span class="tag">score ${a.score}</span>` : ""}
+        ${a.cv ? `<a class="tag" href="/api/cv/${a.cv.id}">${esc(a.cv.filename)}</a>` : ""}
+        <span class="chip k-${a.stage.kind}">${esc(a.stage.label)}</span>
+      </span></div>
+    <div class="act">${a.days_in_stage}d in stage · applied ${fmtDate(a.applied_at)}
+      ${a.url ? ` · <a href="${safeUrl(a.url)}" target="_blank" rel="noopener">posting</a>` : ""}</div>
+    ${action}</article>`;
+}
+
+async function renderActivity() {
+  const events = await getJSON("/api/activity?limit=100");
+  $("#list").innerHTML = events.map(e => `<article class="card">
+    <div class="row"><span class="co">${esc(e.company)}</span>
+      <span class="ti">${esc(e.title)}</span>
+      <span class="right"><span class="when">${fmtDate(e.occurred_at)}</span></span></div>
+    <div class="act">${e.kind === "applied" ? "applied" : "moved to " + esc(e.stage || "")}
+      ${e.back_dated ? " · recorded later" : ""}${e.note ? " — " + esc(e.note) : ""}</div>
+  </article>`).join("") || '<div class="empty">Nothing recorded yet.</div>';
+}
+
+function stageOptions(current) {
+  const group = kind => STAGES.filter(s => s.kind === kind)
+    .map(s => `<option value="${s.id}" ${s.id === current ? "selected" : ""}>${esc(s.label)}</option>`).join("");
+  return `<optgroup label="active">${group("active")}</optgroup>
+          <optgroup label="won">${group("won")}</optgroup>
+          <optgroup label="lost">${group("lost")}</optgroup>`;
+}
+
+async function openPanel(id) {
+  const a = await getJSON("/api/applications/" + id);
+  OPEN = id;
+  $("#p-title").textContent = `${a.company} — ${a.title}`;
+  $("#p-body").innerHTML = `
+    <div class="row"><span class="chip k-${a.stage.kind}">${esc(a.stage.label)}</span>
+      ${a.cv ? `<a class="tag" href="/api/cv/${a.cv.id}">download CV</a>` : ""}</div>
+    <div class="act">applied ${fmtDate(a.applied_at)}</div>
+    <h3>Move to</h3>
+    <select id="t-stage">${stageOptions(null)}</select>
+    <input id="t-when" type="date" value="${new Date().toISOString().slice(0,10)}">
+    <textarea id="t-note" placeholder="what happened"></textarea>
+    <input id="t-action" placeholder="next action">
+    <input id="t-action-at" type="date">
+    <div class="row"><button id="t-save">record</button><span class="warn" id="t-err"></span></div>
+    ${a.texts.cover_letter ? `<h3>Cover letter</h3><p>${esc(a.texts.cover_letter)}</p>` : ""}
+    ${a.texts.why_company ? `<h3>Why this company</h3><p>${esc(a.texts.why_company)}</p>` : ""}
+    ${(a.answers || []).map(x => `<h3>${esc(x.question)}</h3><p>${esc(x.answer)}</p>`).join("")}
+    <h3>Timeline</h3>
+    <div class="tl">${a.timeline.map(e => `<div class="ev">
+      <div class="when">${fmtDate(e.occurred_at)}${e.back_dated ? " · recorded later" : ""}</div>
+      <div>${e.kind === "applied" ? "applied" : "moved to " + esc(e.stage || "")}</div>
+      ${e.note ? `<div class="act">${esc(e.note)}</div>` : ""}
+      ${e.next_action ? `<div class="act">next: ${esc(e.next_action)} ${fmtDate(e.next_action_at)}</div>` : ""}
+    </div>`).join("")}</div>`;
+  $("#t-save").addEventListener("click", saveTransition);
+  $("#panel").classList.add("open");
+  $("#backdrop").classList.add("on");
+}
+
+async function saveTransition() {
+  try {
+    await postJSON(`/api/applications/${OPEN}/stage`, {
+      stage_id: Number($("#t-stage").value),
+      occurred_at: $("#t-when").value || undefined,
+      note: $("#t-note").value || undefined,
+      next_action: $("#t-action").value || undefined,
+      next_action_at: $("#t-action-at").value || undefined,
+    });
+    closePanel();
+    await refresh();
+  } catch (err) { $("#t-err").textContent = err.message; }
+}
+
+function closePanel() {
+  $("#panel").classList.remove("open");
+  $("#backdrop").classList.remove("on");
+  OPEN = null;
+}
+
+async function lookup() {
+  $("#u-warn").textContent = "";
+  try {
+    const found = await postJSON("/api/lookup-url", {url: $("#u-url").value});
+    $("#u-title").value = found.title || "";
+    $("#u-company").value = found.company || "";
+    window.LOOKED_UP = found;
+    if (found.needs_review)
+      $("#u-warn").textContent = "guessed from the page — check the title and company";
+  } catch (err) { $("#u-warn").textContent = err.message; }
+}
+
+async function saveApplication() {
+  $("#u-err").textContent = "";
+  try {
+    let cvId = $("#u-cv").value ? Number($("#u-cv").value) : undefined;
+    const file = $("#u-file").files[0];
+    if (file) {
+      const content = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      cvId = (await postJSON("/api/cv", {filename: file.name, content})).id;
+    }
+    const found = window.LOOKED_UP || {};
+    await postJSON("/api/applications", {
+      url: $("#u-url").value,
+      title: $("#u-title").value,
+      company: $("#u-company").value,
+      description: found.description || "",
+      location: found.location || undefined,
+      salary_raw: found.salary_raw || undefined,
+      applied_at: $("#u-applied").value || undefined,
+      cover_letter: $("#u-cover").value || undefined,
+      why_company: $("#u-why").value || undefined,
+      cv_file_id: cvId,
+    });
+    $("#new").classList.remove("on");
+    await boot();
+  } catch (err) { $("#u-err").textContent = err.message; }
+}
+
+function switchView(view) {
+  VIEW = view;
+  $("#tab-list").classList.toggle("on", view === "list");
+  $("#tab-activity").classList.toggle("on", view === "activity");
+  refresh();
+}
+
+$("#tab-list").addEventListener("click", () => switchView("list"));
+$("#tab-activity").addEventListener("click", () => switchView("activity"));
+$("#kind").addEventListener("change", refresh);
+["#q", "#attention"].forEach(s => $(s).addEventListener("input", renderList));
+$("#add").addEventListener("click", () => $("#new").classList.toggle("on"));
+$("#u-look").addEventListener("click", lookup);
+$("#u-save").addEventListener("click", saveApplication);
+$("#p-close").addEventListener("click", closePanel);
+$("#backdrop").addEventListener("click", closePanel);
+boot();
+</script>
+</body>
+</html>
