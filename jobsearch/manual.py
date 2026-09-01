@@ -118,12 +118,18 @@ def _flatten(item: dict, reader) -> dict:
     raw = reader(item)
     return {
         "title": raw.get("title"),
-        "company": None,                       # vendor payloads omit it; the URL slug is not a name
+        "company": None,                       # vendor payloads omit it; from_ats fills a guess from the slug
         "description": normalize.description(raw.get("description") or ""),
         "location": raw.get("location"),
         "salary_raw": None,
         "posted_at": parse_posted_at(raw.get("posted_at")),
     }
+
+
+def _company_from_slug(slug: str) -> str:
+    """A human-readable guess at the employer name: each board is one employer,
+    so the name only exists in the URL slug, never in the vendor payload."""
+    return " ".join(part.title() for part in re.split(r"[-_]+", slug) if part)
 
 
 def from_ats(url: str, *, transport=None) -> dict | None:
@@ -142,8 +148,11 @@ def from_ats(url: str, *, transport=None) -> dict | None:
         items = [i for i in (payload.get("jobs") or []) if str(i.get("id")) == job_id]
         if not items:
             return None
-        return _flatten(items[0], reader)
-    return _flatten(payload, reader)
+        posting = _flatten(items[0], reader)
+    else:
+        posting = _flatten(payload, reader)
+    posting["company"] = _company_from_slug(slug)
+    return posting
 
 
 def _nodes(text: str):
@@ -237,13 +246,16 @@ def from_meta(html: str) -> dict:
 def extract(url: str, *, transport=None) -> dict:
     """What the paste-a-URL form gets back. Nothing here writes to the database.
 
-    `needs_review` is a fact about the extraction, not a score: either the page
-    told us what this job is, or we guessed from a page title and the owner has
-    to look. There is no third state.
+    Three paths, tried in order: a known ATS vendor's own API, schema.org
+    JSON-LD on the page, then `og:`/`<title>` scraping. `needs_review` means
+    some field here is a guess a human must confirm — not which path ran: the
+    ATS path is structured but its company name is guessed from the URL slug,
+    so it still asks for review.
     """
     posting = from_ats(url, transport=transport)
     if posting and posting.get("title"):
-        return {**posting, "url": url, "via": "ats", "needs_review": posting["company"] is None}
+        # Guessed from the slug, not stated by the vendor API — always needs a human to confirm it.
+        return {**posting, "url": url, "via": "ats", "needs_review": True}
 
     final_url, html = safe_fetch_url(url, transport=transport)
     posting = from_jsonld(html)

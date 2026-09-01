@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -158,3 +160,25 @@ def test_extract_flags_the_fallback_for_review(monkeypatch):
     result = manual.extract("https://acme.com/x")
     assert result["needs_review"] is True
     assert result["via"] == "fallback"
+
+
+def test_ats_slug_becomes_a_company_name():
+    _vendor, slug, _job_id = manual.ats_target(
+        "https://boards.greenhouse.io/acme-payments/jobs/4512345")
+    assert manual._company_from_slug(slug) == "Acme Payments"
+
+
+def test_extract_takes_the_ats_path_and_still_flags_review(monkeypatch):
+    payload = json.dumps({
+        "id": 4512345,
+        "absolute_url": "https://boards.greenhouse.io/acme-payments/jobs/4512345",
+        "title": "Senior Backend Engineer",
+        "content": "<p>Payments team.</p>",
+        "location": {"name": "Berlin, DE"},
+        "first_published": "2026-08-20T00:00:00Z",
+    })
+    monkeypatch.setattr(manual, "safe_fetch_url", lambda url, **kw: (url, payload))
+    result = manual.extract("https://boards.greenhouse.io/acme-payments/jobs/4512345")
+    assert result["via"] == "ats"
+    assert result["company"] == "Acme Payments"
+    assert result["needs_review"] is True
