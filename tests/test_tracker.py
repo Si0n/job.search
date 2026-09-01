@@ -72,6 +72,21 @@ def test_a_missing_date_is_none_not_an_error():
     assert parse_when("", "next_action_at", now=NOW) is None
 
 
+def test_parse_when_truncates_microseconds():
+    # DATETIME columns store whole seconds; a value that still carries
+    # microseconds must never reach a comparison or an INSERT with them.
+    result = parse_when("2026-08-30T09:00:00.500000", "applied_at", now=NOW)
+    assert result.microsecond == 0
+
+
+def test_a_transition_with_no_occurred_at_or_now_gets_a_whole_second():
+    assert parse_transition(body(stage_id=5))["occurred_at"].microsecond == 0
+
+
+def test_an_application_with_no_applied_at_or_now_gets_a_whole_second():
+    assert parse_application(body(job_id=42))["application"]["applied_at"].microsecond == 0
+
+
 def test_an_overlong_note_is_rejected():
     with pytest.raises(ValueError, match="note"):
         parse_transition(body(stage_id=5, note="x" * 4001), now=NOW)

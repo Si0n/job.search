@@ -95,6 +95,7 @@ def parse_when(value, field: str, *, now: datetime | None = None) -> datetime | 
     # naive datetimes, and comparing naive with aware datetimes raises TypeError.
     if when.tzinfo is not None:
         when = when.astimezone().replace(tzinfo=None)
+    when = _truncate_micros(when)
     if not EARLIEST <= when <= (now or datetime.now()) + timedelta(days=FUTURE_DAYS):
         raise ValueError(f"{field} out of range: {value!r}")
     return when
@@ -137,7 +138,7 @@ def parse_stage_request(raw: str | bytes) -> dict:
 
 
 def parse_transition(raw: str | bytes, *, now: datetime | None = None) -> dict:
-    now = now or datetime.now()
+    now = _truncate_micros(now or datetime.now())
     payload = _object(raw)
     return {
         "stage_id": _int(payload, "stage_id"),
@@ -155,7 +156,7 @@ def parse_application(raw: str | bytes, *, now: datetime | None = None) -> dict:
     it is rendered directly as a link, so a `javascript:` url must never reach
     the database rather than merely being neutralised at render time.
     """
-    now = now or datetime.now()
+    now = _truncate_micros(now or datetime.now())
     payload = _object(raw)
     job_id = _int(payload, "job_id", required=False)
     url = _text(payload, "url", MAX_URL)
@@ -196,6 +197,14 @@ def _when(value) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value).replace(" ", "T"))
+
+
+def _truncate_micros(value: datetime) -> datetime:
+    """The DATETIME columns this module writes store whole seconds, and MySQL
+    rounds rather than truncates on insert: an untruncated value can be stored
+    as a moment that never happened — later than the value itself, which is
+    enough to flip a `<=` guard compared against it in Python."""
+    return value.replace(microsecond=0)
 
 
 def buckets(now: datetime) -> dict[str, tuple[datetime, datetime]]:
@@ -348,7 +357,7 @@ def stage_by_slug(conn, slug: str) -> dict:
 def create_stage(conn, parsed: dict, now: datetime | None = None) -> dict:
     """Add a custom stage. A slug collision is refused rather than reused: two
     stages sharing an identity would silently merge in every list and count."""
-    now = now or datetime.now()
+    now = _truncate_micros(now or datetime.now())
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM stages WHERE slug = %s", (parsed["slug"],))
         if cur.fetchone():
@@ -369,7 +378,7 @@ def create_application(conn, job_id: int, fields: dict, *, now: datetime | None 
     The row and its first event are written together: an application with no
     event would show an empty timeline for something that demonstrably happened.
     """
-    now = now or datetime.now()
+    now = _truncate_micros(now or datetime.now())
     applied_stage = stage_by_slug(conn, "applied")
     try:
         with conn.cursor() as cur:
@@ -406,7 +415,7 @@ def transition(conn, application_id: int, parsed: dict, *, now: datetime | None 
     call on a job already at technical interview appends to the timeline and
     leaves the current stage alone. `current` says which of the two happened.
     """
-    now = now or datetime.now()
+    now = _truncate_micros(now or datetime.now())
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM stages WHERE id = %s", (parsed["stage_id"],))
