@@ -159,10 +159,11 @@ def test_a_stage_id_boolean_is_still_rejected():
 
 
 def test_a_timezone_aware_datetime_is_normalized():
-    # Datetimes with timezone offsets should be converted to naive local time.
-    parsed = parse_transition(body(
-        stage_id=5, next_action_at="2026-09-05T11:00:00+02:00"), now=NOW)
-    # The exact value depends on local timezone, but it should be a naive datetime.
-    assert parsed["next_action_at"].tzinfo is None
-    # Verify it's a datetime object (not None and not raising)
-    assert isinstance(parsed["next_action_at"], datetime)
+    # Asserted as a preserved instant rather than a fixed hour: the correct
+    # naive value depends on the machine's zone, but the moment in time it
+    # names must not. A bare .replace(tzinfo=None) would shift it and fail here.
+    aware = datetime.fromisoformat("2026-09-05T11:00:00+02:00")
+    parsed = parse_transition(body(stage_id=5, next_action_at="2026-09-05T11:00:00+02:00"), now=NOW)
+    result = parsed["next_action_at"]
+    assert result.tzinfo is None
+    assert result.astimezone() == aware
