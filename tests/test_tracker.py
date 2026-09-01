@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 
 from jobsearch.tracker import (
-    STAGE_KINDS, build_stats, buckets, parse_answers, parse_application,
+    STAGE_KINDS, build_stats, buckets, parse_answers, parse_application, parse_edit,
     parse_stage_request, parse_transition, parse_when, slug_for,
 )
 
@@ -182,6 +182,25 @@ def test_a_timezone_aware_datetime_is_normalized():
     result = parsed["next_action_at"]
     assert result.tzinfo is None
     assert result.astimezone() == aware
+
+
+def test_a_valid_partial_edit_parses():
+    assert parse_edit(body(cover_letter="Updated letter")) == {"cover_letter": "Updated letter"}
+
+
+def test_an_edit_with_an_unexpected_key_is_rejected():
+    with pytest.raises(ValueError, match="unexpected"):
+        parse_edit(body(stage_id=5))
+
+
+def test_an_empty_edit_is_rejected():
+    with pytest.raises(ValueError, match="nothing"):
+        parse_edit(body())
+
+
+def test_an_overlong_edit_field_is_rejected():
+    with pytest.raises(ValueError, match="why_company"):
+        parse_edit(body(why_company="x" * 8001))
 
 
 APPS = [
