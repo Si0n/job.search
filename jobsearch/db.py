@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -66,3 +67,16 @@ def migrate(conn, migrations_dir: str = "migrations") -> list[str]:
         applied.append(path.name)
 
     return applied
+
+
+def as_json(value, fallback):
+    """MySQL JSON columns arrive as str from some drivers and as parsed objects
+    from others. Accept both rather than depending on the driver's mood."""
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return fallback

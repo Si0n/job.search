@@ -237,3 +237,102 @@ def test_a_ghosting_is_not_a_response():
                "occurred_at": datetime(2026, 8, 29), "stage_slug": "ghosted",
                "stage_kind": "lost", "stage_weight": 0}]
     assert build_stats([APPS[1]], events, NOW)["previous_week"]["response_rate"] == 0.0
+
+
+from jobsearch.tracker import build_activity, build_detail, build_list, build_timeline
+
+def row(**over):
+    base = {
+        "id": 1, "job_id": 42, "title": "Backend Engineer", "company": "Acme",
+        "url": "https://acme.com/jobs/1", "score": 8,
+        "applied_at": datetime(2026, 8, 25, 9, 0),
+        "stage_at": datetime(2026, 8, 28, 9, 0),
+        "stage_slug": "tech_interview", "stage_label": "Technical interview",
+        "stage_kind": "active", "stage_weight": 40,
+        "next_action": None, "next_action_at": None,
+        "cv_file_id": None, "cv_filename": None,
+    }
+    return {**base, **over}
+
+
+def test_a_lost_application_sorts_below_every_active_one():
+    cards = build_list([
+        row(id=1, stage_slug="declined", stage_kind="lost", stage_weight=0),
+        row(id=2, stage_slug="recruiter_screen", stage_kind="active", stage_weight=20),
+    ], NOW)
+    assert [c["id"] for c in cards] == [2, 1]
+
+
+def test_heavier_stages_sort_first():
+    cards = build_list([
+        row(id=1, stage_weight=20), row(id=2, stage_weight=90, stage_kind="won"),
+        row(id=3, stage_weight=40),
+    ], NOW)
+    assert [c["id"] for c in cards] == [2, 3, 1]
+
+
+def test_within_a_stage_the_most_recently_moved_is_first():
+    cards = build_list([
+        row(id=1, stage_at=datetime(2026, 8, 20)),
+        row(id=2, stage_at=datetime(2026, 8, 30)),
+    ], NOW)
+    assert [c["id"] for c in cards] == [2, 1]
+
+
+def test_a_next_action_is_badged_against_today():
+    cards = build_list([
+        row(id=1, next_action="chase", next_action_at=datetime(2026, 8, 30)),
+        row(id=2, next_action="call", next_action_at=datetime(2026, 9, 1, 11, 0)),
+        row(id=3, next_action="call", next_action_at=datetime(2026, 9, 5, 11, 0)),
+    ], NOW)
+    due = {c["id"]: c["next_action"]["due"] for c in cards}
+    assert due == {1: "overdue", 2: "today", 3: "later"}
+
+
+def test_no_next_action_is_none_rather_than_an_empty_badge():
+    assert build_list([row()], NOW)[0]["next_action"] is None
+
+
+def test_days_in_stage_is_counted_from_stage_at():
+    assert build_list([row()], NOW)[0]["days_in_stage"] == 4
+
+
+def test_a_cv_is_reported_only_when_one_is_attached():
+    assert build_list([row()], NOW)[0]["cv"] is None
+    attached = build_list([row(cv_file_id=3, cv_filename="cv.pdf")], NOW)[0]
+    assert attached["cv"] == {"id": 3, "filename": "cv.pdf"}
+
+
+EVENTS_ONE = [
+    {"id": 1, "application_id": 1, "kind": "applied", "stage_label": "Applied",
+     "occurred_at": datetime(2026, 8, 25, 9, 0), "created_at": datetime(2026, 8, 25, 9, 0),
+     "note": None, "next_action": None, "next_action_at": None},
+    {"id": 2, "application_id": 1, "kind": "stage", "stage_label": "Technical interview",
+     "occurred_at": datetime(2026, 8, 28, 9, 0), "created_at": datetime(2026, 8, 31, 20, 0),
+     "note": "with the CTO", "next_action": "call", "next_action_at": datetime(2026, 9, 5)},
+]
+
+
+def test_a_timeline_reads_newest_first():
+    assert [e["id"] for e in build_timeline(EVENTS_ONE)] == [2, 1]
+
+
+def test_an_event_recorded_later_than_it_happened_is_marked_back_dated():
+    timeline = {e["id"]: e for e in build_timeline(EVENTS_ONE)}
+    assert timeline[2]["back_dated"] is True
+    assert timeline[1]["back_dated"] is False
+
+
+def test_detail_carries_the_submitted_text_and_the_timeline():
+    detail = build_detail(
+        row(cover_letter="Dear team", why_company="payments", answers='[{"question": "Visa?", "answer": "EU"}]'),
+        EVENTS_ONE, NOW)
+    assert detail["texts"]["cover_letter"] == "Dear team"
+    assert detail["answers"] == [{"question": "Visa?", "answer": "EU"}]
+    assert [e["id"] for e in detail["timeline"]] == [2, 1]
+
+
+def test_activity_names_the_job_each_event_belongs_to():
+    rows = [{**EVENTS_ONE[1], "title": "Backend Engineer", "company": "Acme"}]
+    assert build_activity(rows)[0]["company"] == "Acme"
+    assert build_activity(rows)[0]["application_id"] == 1

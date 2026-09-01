@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import re
 
+from jobsearch.db import as_json
 from jobsearch.profile import compute_hash
 
 # Canonical name -> pattern. Aliases live here so the page never sees two names
@@ -140,19 +140,6 @@ def daily_stats(conn) -> dict[str, int]:
     return out
 
 
-def _as_json(value, fallback):
-    """MySQL JSON columns arrive as str from some drivers and as parsed objects from
-    others. Accept both rather than depending on the driver's mood."""
-    if value is None:
-        return fallback
-    if isinstance(value, (dict, list)):
-        return value
-    try:
-        return json.loads(value)
-    except (TypeError, ValueError):
-        return fallback
-
-
 def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
 
@@ -267,7 +254,7 @@ def _merged_meta(postings: list[dict]) -> dict:
         raw = posting.get("source_meta")
         if not raw:
             continue
-        parsed = _as_json(raw, {})
+        parsed = as_json(raw, {})
         if isinstance(parsed, dict):
             merged.update(parsed)
     return merged
@@ -337,14 +324,14 @@ def build_view(job_rows: list[dict], posting_rows: list[dict],
             "salary": format_salary(job),
             "score": job.get("score"),
             "red_flag_penalty": job.get("red_flag_penalty") or 0,
-            "dimensions": _as_json(job.get("dimensions"), {}),
+            "dimensions": as_json(job.get("dimensions"), {}),
             "dimension_detail": _dimension_detail(
-                _as_json(job.get("dimensions"), {}),
-                _as_json(job.get("dimension_notes"), {}),
+                as_json(job.get("dimensions"), {}),
+                as_json(job.get("dimension_notes"), {}),
                 weights),
-            "hard_concerns": _as_json(job.get("hard_concerns"), []),
-            "strengths": _as_json(job.get("strengths"), []),
-            "weaknesses": _as_json(job.get("weaknesses"), []),
+            "hard_concerns": as_json(job.get("hard_concerns"), []),
+            "strengths": as_json(job.get("strengths"), []),
+            "weaknesses": as_json(job.get("weaknesses"), []),
             "verdict": job.get("verdict") or "",
             "status": job.get("status"),
             "is_new": job.get("status") is None,

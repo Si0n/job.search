@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
+from jobsearch.db import as_json
+
 MAX_NOTE = 4000
 MAX_ACTION = 255
 MAX_TEXT = 8000
@@ -243,3 +245,92 @@ def build_stats(applications: list[dict], events: list[dict], now: datetime) -> 
             "response_rate": round(responded / len(sent), 2) if sent else None,
         }
     return out
+
+
+def _due(when, now: datetime) -> str | None:
+    """Where a next action sits relative to today. Compared by date, not by
+    timestamp: an interview at 11:00 is still 'today' when it is 14:30."""
+    if when is None:
+        return None
+    day, today = _when(when).date(), now.date()
+    return "overdue" if day < today else "today" if day == today else "later"
+
+
+def build_list(rows: list[dict], now: datetime) -> list[dict]:
+    """Pure. Application rows in, cards out, in the order they should be read.
+
+    The sort is here rather than in an ORDER BY for the same reason
+    dashboard.build_view sorts in Python: it is the rule most worth testing, and
+    a database is not needed to test it.
+    """
+    cards = [{
+        "id": row["id"],
+        "job_id": row["job_id"],
+        "title": row["title"],
+        "company": row["company"],
+        "url": row.get("url"),
+        "score": row.get("score"),
+        "applied_at": str(row["applied_at"]),
+        "stage": {"slug": row["stage_slug"], "label": row["stage_label"],
+                  "kind": row["stage_kind"], "weight": row["stage_weight"]},
+        "stage_at": str(row["stage_at"]),
+        "days_in_stage": (now - _when(row["stage_at"])).days,
+        "next_action": ({"text": row.get("next_action"),
+                         "at": str(row["next_action_at"]) if row.get("next_action_at") else None,
+                         "due": _due(row.get("next_action_at"), now)}
+                        if row.get("next_action") or row.get("next_action_at") else None),
+        "cv": ({"id": row["cv_file_id"], "filename": row.get("cv_filename")}
+               if row.get("cv_file_id") else None),
+    } for row in rows]
+
+    cards.sort(key=lambda c: (c["stage"]["kind"] == "lost",
+                              -c["stage"]["weight"],
+                              -_when(c["stage_at"]).timestamp()))
+    return cards
+
+
+def build_timeline(events: list[dict]) -> list[dict]:
+    """Pure. Newest first, by when things happened rather than when they were typed.
+
+    `back_dated` exists so a timeline entered days later reads honestly instead
+    of implying it was recorded as it happened.
+    """
+    items = [{
+        "id": event["id"],
+        "kind": event["kind"],
+        "stage": event.get("stage_label"),
+        "occurred_at": str(event["occurred_at"]),
+        "created_at": str(event["created_at"]),
+        "back_dated": _when(event["created_at"]).date() != _when(event["occurred_at"]).date(),
+        "note": event.get("note"),
+        "next_action": event.get("next_action"),
+        "next_action_at": (str(event["next_action_at"])
+                           if event.get("next_action_at") else None),
+    } for event in events]
+    items.sort(key=lambda i: (_when(i["occurred_at"]).timestamp(), i["id"]), reverse=True)
+    return items
+
+
+def build_detail(row: dict, events: list[dict], now: datetime) -> dict:
+    card = build_list([row], now)[0]
+    card["texts"] = {
+        "cover_letter": row.get("cover_letter"),
+        "why_company": row.get("why_company"),
+        "salary_expectation": row.get("salary_expectation"),
+        "notice_period": row.get("notice_period"),
+    }
+    card["answers"] = as_json(row.get("answers"), [])
+    card["timeline"] = build_timeline(events)
+    return card
+
+
+def build_activity(rows: list[dict]) -> list[dict]:
+    """The timeline across every application, each entry naming its job."""
+    source = {row["id"]: row for row in rows}
+    items = build_timeline(rows)
+    for item in items:
+        row = source[item["id"]]
+        item["application_id"] = row["application_id"]
+        item["title"] = row["title"]
+        item["company"] = row["company"]
+    return items
