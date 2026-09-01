@@ -534,6 +534,29 @@ def fetch_activity(conn, limit: int = 100) -> list[dict]:
         return list(cur.fetchall())
 
 
+def job_id_for_url(conn, url: str) -> int | None:
+    """The job an already-harvested posting lives under, found by the URL the
+    owner actually pasted rather than by fingerprint.
+
+    Fingerprinting cannot see the URL — it is built from title, company,
+    location, employment type and arrangement — and a manually pasted posting
+    carries no arrangement hint, so it normalises to 'unknown'. That alone
+    makes its fingerprint diverge from a remote job's (whose fingerprint drops
+    location, where the manual one keeps it) even with identical title and
+    company. Matching the URL directly is what actually answers "have we seen
+    this link before". Both slash forms are checked since people paste either.
+    """
+    alt = url[:-1] if url.endswith("/") else url + "/"
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT job_id FROM job_sources WHERE url = %s OR url = %s "
+            "ORDER BY id LIMIT 1",
+            (url, alt),
+        )
+        row = cur.fetchone()
+    return row["job_id"] if row else None
+
+
 EDITABLE = ("cover_letter", "why_company", "salary_expectation", "notice_period")
 
 

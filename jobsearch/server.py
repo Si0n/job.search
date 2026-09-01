@@ -358,8 +358,14 @@ def _make_handler(settings, port, lan: bool = False):
 
             def work(conn):
                 job_id = request["job_id"]
+                posting = request["posting"]
                 if job_id is None:
-                    posting = request["posting"]
+                    # Checked before the upsert: fingerprinting can't see the
+                    # URL (tracker.job_id_for_url explains why), so without this
+                    # a link already in job_sources would upsert into a twin job
+                    # carrying no score and no draft instead of attaching here.
+                    job_id = tracker.job_id_for_url(conn, posting["url"])
+                if job_id is None:
                     source = store.source_by_name(conn, "manual")
                     # The URL's digest is the external id, so re-pasting the same
                     # link updates that posting instead of creating a second one.

@@ -213,10 +213,15 @@ The `manual` source row: `priority = 90`, `fetch_mode = 'http-html'`,
 - Its low priority means that when a manual posting merges into an already-harvested job,
   the harvested board keeps ownership of title and company.
 
-Merging works in the tracker's favour: `dedupe.can_merge` requires a *different*
-`source_id`, so pasting a Djinni URL already in the database joins the existing canonical
-job instead of duplicating it, and the application attaches to the job that already
-carries a score and a draft.
+Merging works in the tracker's favour, but not through `dedupe.can_merge`: fingerprinting
+cannot see the URL at all — it is built from title, company, location, employment type and
+arrangement, and a manually pasted posting carries no arrangement hint, so it normalises to
+`unknown` and keeps location where a remote harvested job's fingerprint drops it. Identical
+title and company can still produce different fingerprints. So `tracker.job_id_for_url`
+checks `job_sources.url` for the pasted link (both trailing-slash forms) before any upsert
+runs: pasting a Djinni URL already in the database attaches straight to the existing
+canonical job, and the application lands on the job that already carries a score and a
+draft. Fingerprint-based merging is the fallback, for a URL genuinely new to this run.
 
 One change to `filters.apply`: its selection gains
 `AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.job_id = j.id)`. A job applied to
