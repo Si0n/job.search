@@ -220,12 +220,21 @@ def save_draft(args) -> dict:
 
 
 def apply_url(args) -> dict:
-    """Look a posting up, store it as a manual job, and open an application on it.
+    """Look a posting up if needed, store it as a manual job, and open an
+    application on it.
 
-    Mirrors server.post_application's create path: job_id_for_url is checked
-    before the upsert, because fingerprinting can't see the pasted URL — without
-    this check, a URL already in job_sources would upsert into a twin job
-    carrying no score and no draft instead of attaching to the existing one.
+    Checks job_sources before fetching anything: a URL already there means the
+    job is already stored with better data than a re-scrape would produce (a
+    score, a draft, an owner-corrected title/company), so skipping the fetch
+    costs nothing — and a live fetch costs a request and fails outright if the
+    posting has since gone offline, exactly when the stored copy matters most.
+
+    This checks args.url exactly as typed, unlike the server (which only ever
+    sees a URL after a separate lookup-then-correct step has already resolved
+    redirects) — a shortened or redirecting link still falls through to the
+    fetch path here. Acceptable: job_id_for_url already tries both
+    trailing-slash forms, and that is enough without adding redirect
+    resolution just for the CLI's sake.
     """
     import hashlib
     from datetime import datetime
@@ -234,14 +243,15 @@ def apply_url(args) -> dict:
     from jobsearch.models import RawPosting
 
     settings = load_settings(args.env)
-    found = manual.extract(args.url)
-    if not found.get("title") or not found.get("company"):
-        raise SystemExit(f"could not read a title and company from {args.url} — "
-                         "use the dashboard, which lets you correct them")
     conn = db.connect(settings)
     try:
-        job_id = tracker.job_id_for_url(conn, found["url"])
+        job_id = tracker.job_id_for_url(conn, args.url)
+        source_kind = "existing"
         if job_id is None:
+            found = manual.extract(args.url)
+            if not found.get("title") or not found.get("company"):
+                raise SystemExit(f"could not read a title and company from {args.url} — "
+                                 "use the dashboard, which lets you correct them")
             source = store.source_by_name(conn, "manual")
             posting = RawPosting(
                 external_id=hashlib.sha256(found["url"].encode()).hexdigest()[:32],
@@ -250,12 +260,13 @@ def apply_url(args) -> dict:
                 salary_raw=found.get("salary_raw"), posted_at=found.get("posted_at"))
             job_id, _is_new = store.upsert_posting(
                 conn, source, posting, None, settings.rates, datetime.now())
+            source_kind = "fetched"
         applied_at = (tracker.parse_when(args.applied_at, "applied_at")
                       if args.applied_at else datetime.now())
         result = tracker.create_application(conn, job_id, {"applied_at": applied_at})
     finally:
         conn.close()
-    return {"command": "apply", "needs_review": found.get("needs_review"), **result}
+    return {"command": "apply", "source": source_kind, **result}
 
 
 def applications(args) -> dict:
