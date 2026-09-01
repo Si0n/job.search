@@ -379,6 +379,10 @@ def create_application(conn, job_id: int, fields: dict, *, now: datetime | None 
     event would show an empty timeline for something that demonstrably happened.
     """
     now = _truncate_micros(now or datetime.now())
+    # Truncated here, not trusted from the caller: fields["applied_at"] lands in
+    # three columns below, and a caller that skips parse_application (a script,
+    # a future CLI command) would otherwise hand this an untruncated moment.
+    applied_at = _truncate_micros(fields["applied_at"])
     applied_stage = stage_by_slug(conn, "applied")
     try:
         with conn.cursor() as cur:
@@ -387,7 +391,7 @@ def create_application(conn, job_id: int, fields: dict, *, now: datetime | None 
                 "cv_file_id, cover_letter, why_company, salary_expectation, "
                 "notice_period, answers, created_at, updated_at) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (job_id, fields["applied_at"], applied_stage["id"], fields["applied_at"],
+                (job_id, applied_at, applied_stage["id"], applied_at,
                  fields.get("cv_file_id"), fields.get("cover_letter"),
                  fields.get("why_company"), fields.get("salary_expectation"),
                  fields.get("notice_period"),
@@ -398,7 +402,7 @@ def create_application(conn, job_id: int, fields: dict, *, now: datetime | None 
             cur.execute(
                 "INSERT INTO application_events (application_id, kind, stage_id, "
                 "occurred_at, created_at) VALUES (%s, 'applied', %s, %s, %s)",
-                (application_id, applied_stage["id"], fields["applied_at"], now),
+                (application_id, applied_stage["id"], applied_at, now),
             )
         conn.commit()
     except Exception:
@@ -416,6 +420,12 @@ def transition(conn, application_id: int, parsed: dict, *, now: datetime | None 
     leaves the current stage alone. `current` says which of the two happened.
     """
     now = _truncate_micros(now or datetime.now())
+    # Truncated here, not trusted from the caller, for the same reason as
+    # create_application: occurred_at feeds the stage_at <= occurred_at guard
+    # directly, so an untruncated value reopens the exact hole this fixes.
+    occurred_at = _truncate_micros(parsed["occurred_at"])
+    next_action_at = (_truncate_micros(parsed["next_action_at"])
+                       if parsed["next_action_at"] is not None else None)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM stages WHERE id = %s", (parsed["stage_id"],))
@@ -426,16 +436,16 @@ def transition(conn, application_id: int, parsed: dict, *, now: datetime | None 
                 "INSERT INTO application_events (application_id, kind, stage_id, "
                 "occurred_at, note, next_action, next_action_at, created_at) "
                 "VALUES (%s, 'stage', %s, %s, %s, %s, %s, %s)",
-                (application_id, parsed["stage_id"], parsed["occurred_at"], parsed["note"],
-                 parsed["next_action"], parsed["next_action_at"], now),
+                (application_id, parsed["stage_id"], occurred_at, parsed["note"],
+                 parsed["next_action"], next_action_at, now),
             )
             event_id = cur.lastrowid
 
             cur.execute(
                 "UPDATE applications SET stage_id=%s, stage_at=%s, next_action=%s, "
                 "next_action_at=%s, updated_at=%s WHERE id=%s AND stage_at <= %s",
-                (parsed["stage_id"], parsed["occurred_at"], parsed["next_action"],
-                 parsed["next_action_at"], now, application_id, parsed["occurred_at"]),
+                (parsed["stage_id"], occurred_at, parsed["next_action"],
+                 next_action_at, now, application_id, occurred_at),
             )
             became_current = cur.rowcount == 1
         conn.commit()
