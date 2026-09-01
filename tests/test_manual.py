@@ -95,3 +95,66 @@ def test_an_oversized_body_is_refused(monkeypatch):
     with pytest.raises(ValueError, match="larger"):
         manual.safe_fetch_url("https://example.com/x",
                               transport=httpx.MockTransport(handler))
+
+
+from pathlib import Path
+
+FIXTURES = Path(__file__).parent / "fixtures" / "manual"
+
+
+def fixture(name: str) -> str:
+    return (FIXTURES / name).read_text(encoding="utf-8")
+
+
+def test_json_ld_gives_a_complete_posting():
+    posting = manual.from_jsonld(fixture("jsonld.html"))
+    assert posting["title"] == "Senior Backend Engineer"
+    assert posting["company"] == "Acme Payments"
+    assert "Laravel" in posting["description"]
+    assert "<p>" not in posting["description"]      # markup stripped, not shown
+    assert posting["location"] == "Berlin, DE"
+    assert posting["salary_raw"] == "6000-7500 EUR MONTH"
+    assert posting["posted_at"].date().isoformat() == "2026-08-20"
+
+
+def test_a_page_without_json_ld_yields_nothing_rather_than_a_guess():
+    assert manual.from_jsonld(fixture("bare.html")) is None
+
+
+def test_the_fallback_never_passes_a_page_title_off_as_a_job_title():
+    posting = manual.from_meta(fixture("bare.html"))
+    assert posting["title"] == "Careers | Acme"
+    assert posting["company"] == "Acme Payments"
+    assert "backend engineer" in posting["description"]
+
+
+@pytest.mark.parametrize("url,vendor,slug,job_id", [
+    ("https://boards.greenhouse.io/acme/jobs/4512345", "greenhouse", "acme", "4512345"),
+    ("https://jobs.lever.co/acme/8a1b2c3d-4e5f-6789-abcd-ef0123456789",
+     "lever", "acme", "8a1b2c3d-4e5f-6789-abcd-ef0123456789"),
+    ("https://jobs.ashbyhq.com/acme/8a1b2c3d-4e5f-6789-abcd-ef0123456789",
+     "ashby", "acme", "8a1b2c3d-4e5f-6789-abcd-ef0123456789"),
+])
+def test_an_ats_url_is_recognised(url, vendor, slug, job_id):
+    assert manual.ats_target(url) == (vendor, slug, job_id)
+
+
+def test_an_ordinary_careers_url_is_not_an_ats_url():
+    assert manual.ats_target("https://acme.com/careers/backend-engineer") is None
+
+
+def test_extract_prefers_json_ld_and_marks_it_trusted(monkeypatch):
+    monkeypatch.setattr(manual, "safe_fetch_url",
+                        lambda url, **kw: ("https://acme.com/x", fixture("jsonld.html")))
+    result = manual.extract("https://acme.com/x")
+    assert result["needs_review"] is False
+    assert result["via"] == "jsonld"
+    assert result["title"] == "Senior Backend Engineer"
+
+
+def test_extract_flags_the_fallback_for_review(monkeypatch):
+    monkeypatch.setattr(manual, "safe_fetch_url",
+                        lambda url, **kw: ("https://acme.com/x", fixture("bare.html")))
+    result = manual.extract("https://acme.com/x")
+    assert result["needs_review"] is True
+    assert result["via"] == "fallback"
