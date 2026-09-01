@@ -24,7 +24,7 @@ it, and it becomes an ordinary `jobs` row.
 Triage and tracking are separate lifecycles and stay separate tables.
 
 Triage answers *should I read this* and is defined by absence — the dashboard's inbox is
-exactly `applications.job_id IS NULL`. Tracking answers *where did this go* and only
+exactly `triage.job_id IS NULL`. Tracking answers *where did this go* and only
 exists once an application has been sent. Merging them would put `skipped` in the same
 vocabulary as `Interview with CTO`, and would force the inbox query, the `status` CLI
 command, the keyboard triage and the `/review` skill through a rework that buys nothing.

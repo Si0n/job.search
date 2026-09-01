@@ -36,9 +36,15 @@ def check_target(url: str) -> str:
 
     Known gap, accepted: this resolves the hostname and httpx resolves it again
     on connect, with nothing pinning the two to the same address, so a
-    short-TTL DNS rebind between the two calls can defeat the check. Closing it
-    properly means connecting through a custom transport pinned to the address
-    validated here, which was ruled out as more than this tool needs to be.
+    short-TTL DNS rebind between the two calls can defeat the check. Not closed,
+    because winning that race buys an attacker strictly less than they already
+    have on --lan: this dashboard is unauthenticated by design, and a rebind
+    that lands the request back on this box already reaches the whole job
+    database, every draft, every stored CV, and write access — no second step
+    needed. The canonical target of this attack class, a cloud metadata
+    endpoint, does not exist on a laptop or a home LAN either. Reopen this if
+    the dashboard ever gains authentication: "they already have everything"
+    stops being true the moment there is something the LAN cannot already read.
     """
     parsed = urlparse(url)
     if parsed.scheme.lower() not in ALLOWED_SCHEMES:

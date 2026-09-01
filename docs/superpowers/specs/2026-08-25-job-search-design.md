@@ -305,7 +305,7 @@ specified in `2026-09-01-application-tracker-design.md`.
 | `updated_at` | DATETIME | |
 
 Business state only — and the inbox marker: a job with no row here has not been
-triaged. The dashboard's default view is exactly `applications.job_id IS NULL`.
+triaged. The dashboard's default view is exactly `triage.job_id IS NULL`.
 
 ### `schema_migrations`
 
