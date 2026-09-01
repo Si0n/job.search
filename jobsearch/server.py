@@ -502,8 +502,12 @@ def run(settings, host: str | None = None, port: int = 8765,
         address = lan_address()
         if address:
             print(f"  on this network: http://{address}:{port}/", flush=True)
-        print("  --lan serves the dashboard to every device on this network, with "
-              "no password, and its triage and note endpoints accept writes.", flush=True)
+        print("  --lan serves the dashboard to every device on this network, with no "
+              "password: triage, notes, applications and stages all accept writes.",
+              flush=True)
+        print("  It also accepts a CV upload written straight to disk, serves any stored "
+              "CV back on request, and fetches an owner-supplied URL server-side.",
+              flush=True)
     if open_browser:
         webbrowser.open(url)
     try:
