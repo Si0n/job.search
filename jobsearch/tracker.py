@@ -435,3 +435,98 @@ def transition(conn, application_id: int, parsed: dict, *, now: datetime | None 
         raise
     return {"application_id": application_id, "event_id": event_id,
             "stage_id": parsed["stage_id"], "current": became_current}
+
+
+# No inactive_at or filtered_at conditions anywhere in this module, deliberately:
+# an application outlives the posting it came from. The company taking the ad
+# down is not a reason to lose the interview scheduled for Friday.
+_LIST_SQL = """
+SELECT a.id, a.job_id, a.applied_at, a.stage_at, a.next_action, a.next_action_at,
+       a.cv_file_id, cf.filename AS cv_filename,
+       st.slug AS stage_slug, st.label AS stage_label,
+       st.kind AS stage_kind, st.weight AS stage_weight,
+       j.title, j.company, sc.score,
+       (SELECT js.url FROM job_sources js WHERE js.job_id = j.id
+         ORDER BY (js.source_id = j.canonical_source_id) DESC, js.id LIMIT 1) AS url
+FROM applications a
+JOIN stages st   ON st.id = a.stage_id
+JOIN jobs j      ON j.id  = a.job_id
+LEFT JOIN cv_files cf ON cf.id = a.cv_file_id
+LEFT JOIN scores sc   ON sc.id = j.latest_score_id
+"""
+
+_EVENTS_SQL = """
+SELECT e.id, e.application_id, e.kind, e.occurred_at, e.created_at, e.note,
+       e.next_action, e.next_action_at, st.label AS stage_label
+FROM application_events e
+LEFT JOIN stages st ON st.id = e.stage_id
+WHERE e.application_id = %s
+"""
+
+_ACTIVITY_SQL = """
+SELECT e.id, e.application_id, e.kind, e.occurred_at, e.created_at, e.note,
+       e.next_action, e.next_action_at, st.label AS stage_label,
+       j.title, j.company
+FROM application_events e
+JOIN applications a ON a.id = e.application_id
+JOIN jobs j         ON j.id = a.job_id
+LEFT JOIN stages st ON st.id = e.stage_id
+ORDER BY e.occurred_at DESC, e.id DESC
+LIMIT %s
+"""
+
+
+def list_stages(conn) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, slug, label, weight, kind, builtin FROM stages "
+                    "ORDER BY FIELD(kind,'active','won','lost'), weight")
+        return list(cur.fetchall())
+
+
+def fetch_list(conn, *, kind: str | None = None) -> list[dict]:
+    """Rows for the list view. `kind` is checked against the enum rather than
+    interpolated — it arrives from a query string."""
+    sql, params = _LIST_SQL, []
+    if kind in STAGE_KINDS:
+        sql += " WHERE st.kind = %s"
+        params.append(kind)
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return list(cur.fetchall())
+
+
+def fetch_detail(conn, application_id: int) -> tuple[dict | None, list[dict]]:
+    with conn.cursor() as cur:
+        cur.execute(_LIST_SQL + " WHERE a.id = %s", (application_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None, []
+        cur.execute(
+            "SELECT cover_letter, why_company, salary_expectation, notice_period, answers "
+            "FROM applications WHERE id = %s", (application_id,))
+        row.update(cur.fetchone())
+        cur.execute(_EVENTS_SQL, (application_id,))
+        return row, list(cur.fetchall())
+
+
+def fetch_activity(conn, limit: int = 100) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(_ACTIVITY_SQL, (max(1, min(int(limit), 500)),))
+        return list(cur.fetchall())
+
+
+def fetch_stats_rows(conn) -> tuple[list[dict], list[dict]]:
+    """Everything build_stats needs, in two flat reads.
+
+    Whole-table reads because the windows overlap and the volume is hundreds of
+    rows; bucketing in SQL would mean five queries per metric to save nothing.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, applied_at FROM applications")
+        applications = list(cur.fetchall())
+        cur.execute(
+            "SELECT e.application_id, e.kind, e.occurred_at, st.slug AS stage_slug, "
+            "st.kind AS stage_kind, st.weight AS stage_weight "
+            "FROM application_events e LEFT JOIN stages st ON st.id = e.stage_id")
+        events = list(cur.fetchall())
+    return applications, events
