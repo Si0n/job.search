@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-01
 **Status:** Approved for planning
-**Revision:** 1
+**Revision:** 2
 **Extends:** `2026-08-25-job-search-design.md`
 
 ## Purpose
@@ -79,6 +79,12 @@ Seeded:
 | 0 | lost | `withdrawn` | Withdrawn by me |
 | 0 | lost | `ghosted` | Ghosted / no answer |
 
+This vocabulary is the owner's workflow, not a universal recruitment state machine.
+`waiting_feedback` is a state where the others are events, so
+`Technical interview → Waiting for feedback → Technical interview` is a legal and
+expected path — the ladder records where an application sits, and sitting still is a
+place it can sit. Modelling waiting as separate metadata would buy nothing.
+
 A stage is a row, not an enum, for one reason: a custom stage must sort and terminate
 correctly. `Pair programming round` typed into a free-text column has no weight and no
 terminality, so it cannot be placed in the ladder and cannot be told apart from a
@@ -151,9 +157,8 @@ and not `created_at`: a call belongs to the week it happened in.
 |---|---|---|
 | `id` | INT PK | |
 | `sha256` | CHAR(64) UNIQUE | same bytes twice = one row |
-| `filename` | VARCHAR(255) | the name it was uploaded under |
-| `label` | VARCHAR(120) NULL | `backend-heavy, Sep 2026` |
-| `content_type` | VARCHAR(100) | as sniffed, not as claimed |
+| `filename` | VARCHAR(255) | the name it was uploaded under, and how it is listed |
+| `content_type` | VARCHAR(100) | as sniffed, not as claimed — the download header reads it |
 | `size_bytes` | INT | |
 | `path` | VARCHAR(512) | `var/cv/<sha256><ext>` |
 | `uploaded_at` | DATETIME | |
@@ -162,6 +167,11 @@ Content-addressed because the point is fidelity: the CV is edited over time, and
 record must be of the file actually sent, not of whatever `serhii-drozh-cv.pdf` happens
 to contain today. Re-using last week's CV across ten applications stores it once.
 
+It is a file table, not a document manager. `sha256` plus immutable files is the whole
+idea; `content_type` exists because `/api/cv/<id>` has to send one, `size_bytes` because
+it is free, and the filename is how a CV is identified in the picker. No labels, no
+versions, no tags.
+
 ## Manual entry by URL
 
 `POST /api/lookup-url` takes a URL, fetches it, and returns extracted fields for review.
@@ -169,14 +179,19 @@ It writes nothing. Extraction is tried in order:
 
 1. **Known ATS single-posting APIs.** `boards.greenhouse.io/<slug>/jobs/<id>`,
    `jobs.lever.co/<slug>/<id>`, `jobs.ashbyhq.com/<slug>/<id>` — the vendor's own JSON,
-   flattened by the `_greenhouse` / `_lever` / `_ashby` readers already in
-   `adapters/ats.py`. Imported, not rewritten.
+   flattened by the `_greenhouse` / `_lever` / `_ashby` readers that already exist in
+   `adapters/ats.py`. Imported, not rewritten: this step is three URL patterns and three
+   imports, and it would not be worth writing from scratch for this feature alone.
 2. **`schema.org/JobPosting` JSON-LD** in the page: `title`,
    `hiringOrganization.name`, `description`, `datePosted`, `jobLocation`, `baseSalary`,
-   `employmentType`. Most career pages publish it because Google Jobs requires it.
+   `employmentType`. Most career pages publish it because Google Jobs requires it. This
+   is the path that carries most URLs and is built first.
 3. **`og:` / `<title>` fallback**, description from the largest text block. Returned with
-   `confidence: "low"` so the form marks the guessed fields rather than presenting a
-   scraped `Careers | Acme` as a job title.
+   `needs_review: true`, which the form uses to flag the guessed fields rather than
+   presenting a scraped `Careers | Acme` as a job title.
+
+Structured extraction is trusted; the fallback needs review; the human corrects either.
+That is the whole hierarchy — there is no confidence score and no third state.
 
 The response pre-fills an editable form. `POST /api/applications` carries the URL and
 the fields as the owner corrected them — the server does not re-fetch, since the whole
@@ -242,7 +257,8 @@ and `why_company` ≤ 8000 each, `answers` ≤ 20 pairs, dates ISO-8601 and reje
 Three exposures are new, and `--lan` means an unauthenticated writer on the same wifi.
 
 **SSRF — `/api/lookup-url`.** This endpoint exists to make the server fetch a URL the
-caller chooses, which is the shape of the attack. `http`/`https` only; the hostname is
+caller chooses, which is the shape of the attack. The defence is one function,
+`manual.safe_fetch_url()`, not a networking layer: `http`/`https` only; the hostname is
 resolved and rejected if it lands on loopback, private, link-local, multicast or reserved
 space; redirects are followed manually, at most three, each hop re-checked; 20s timeout;
 response body capped at 2 MB.
@@ -318,10 +334,13 @@ Per bucket:
 |---|---|
 | sent | applications with `applied_at` in the window |
 | advanced | events into a stage of kind `active` or `won` |
-| interviews | of those, stages with `weight >= 30` (test task and above) |
 | offers | events into kind `won` |
 | lost | events into kind `lost` |
 | response rate | share of that bucket's *sent* that ever left `Applied` |
+
+Five metrics, and no sixth. An earlier draft counted *interviews* as stages of
+`weight >= 30`, which silently called a take-home an interview; the honest version of
+that number is `advanced`, which is already here.
 
 Response rate is a cohort measure over the applications sent in the window, evaluated at
 query time, so last month's figure rises as replies arrive. It is labelled as a cohort in
@@ -354,7 +373,7 @@ No CLI for stage transitions or uploads.
 `tests/test_manual.py`
 
 - extraction from fixture HTML: a Greenhouse posting, a page carrying JSON-LD, and one
-  with neither — the last must report low confidence rather than a wrong title
+  with neither — the last must set `needs_review` rather than assert a wrong title
 - the SSRF guard table: `localhost`, `127.0.0.1`, `10.0.0.5`, `169.254.169.254`, and a
   public URL redirecting to a private one
 - a manual posting whose fingerprint matches a harvested job merges into it
@@ -371,7 +390,8 @@ No CLI for stage transitions or uploads.
    the `manual` source. Update the existing call sites and the v1 spec's table section.
 2. `jobsearch/tracker.py` — validation, queries, transitions, statistics. Pure functions
    first, with their tests.
-3. `jobsearch/manual.py` — the extraction chain and the SSRF guard, with fixtures.
+3. `jobsearch/manual.py` — `safe_fetch_url()`, then JSON-LD extraction, then the ATS
+   patterns, then the `og:`/`<title>` fallback, with fixtures for each.
 4. `jobsearch/cv.py` — hashing, storage, magic-byte sniffing.
 5. `server.py` — route table, then the handlers.
 6. `static/app.css`, `static/util.js`, `static/applications.html`, and the cross-links.
@@ -384,3 +404,5 @@ No CLI for stage transitions or uploads.
 - More than one application per job
 - Offer comparison, per-stage SLAs, funnel charts beyond the six metrics above
 - Editing or versioning a stored CV in place — a changed CV is a new upload
+- Any schema for the `answers` questions themselves — no field definitions, no form
+  templates, no question table. It is a list of `{question, answer}` and stays one
