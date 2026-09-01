@@ -93,7 +93,13 @@ def apply(conn, profile) -> dict:
             "MAX(js.posted_at) AS posted_at, "
             "CONCAT_WS(' ', j.title, GROUP_CONCAT(js.description SEPARATOR ' ')) AS text "
             "FROM jobs j LEFT JOIN job_sources js ON js.job_id = j.id "
-            "WHERE j.inactive_at IS NULL GROUP BY j.id"
+            # A job that has been applied to is no longer a candidate for
+            # filtering: the decision is made, and stamping it
+            # 'salary below floor' would be a false statement about a live
+            # application — and would hide it from the dashboard entirely.
+            "WHERE j.inactive_at IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.job_id = j.id) "
+            "GROUP BY j.id"
         )
         jobs = list(cur.fetchall())
 

@@ -334,3 +334,104 @@ def build_activity(rows: list[dict]) -> list[dict]:
         item["title"] = row["title"]
         item["company"] = row["company"]
     return items
+
+
+def stage_by_slug(conn, slug: str) -> dict:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM stages WHERE slug = %s", (slug,))
+        row = cur.fetchone()
+    if row is None:
+        raise LookupError(f"unknown stage: {slug}")
+    return row
+
+
+def create_stage(conn, parsed: dict, now: datetime | None = None) -> dict:
+    """Add a custom stage. A slug collision is refused rather than reused: two
+    stages sharing an identity would silently merge in every list and count."""
+    now = now or datetime.now()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM stages WHERE slug = %s", (parsed["slug"],))
+        if cur.fetchone():
+            raise ValueError(f"a stage named {parsed['label']!r} already exists")
+        cur.execute(
+            "INSERT INTO stages (slug, label, weight, kind, builtin, created_at) "
+            "VALUES (%s, %s, %s, %s, FALSE, %s)",
+            (parsed["slug"], parsed["label"], parsed["weight"], parsed["kind"], now),
+        )
+        stage_id = cur.lastrowid
+    conn.commit()
+    return {"id": stage_id, **parsed}
+
+
+def create_application(conn, job_id: int, fields: dict, *, now: datetime | None = None) -> dict:
+    """Open an application on a job, at stage `applied`.
+
+    The row and its first event are written together: an application with no
+    event would show an empty timeline for something that demonstrably happened.
+    """
+    now = now or datetime.now()
+    applied_stage = stage_by_slug(conn, "applied")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO applications (job_id, applied_at, stage_id, stage_at, "
+                "cv_file_id, cover_letter, why_company, salary_expectation, "
+                "notice_period, answers, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (job_id, fields["applied_at"], applied_stage["id"], fields["applied_at"],
+                 fields.get("cv_file_id"), fields.get("cover_letter"),
+                 fields.get("why_company"), fields.get("salary_expectation"),
+                 fields.get("notice_period"),
+                 json.dumps(fields["answers"]) if fields.get("answers") else None,
+                 now, now),
+            )
+            application_id = cur.lastrowid
+            cur.execute(
+                "INSERT INTO application_events (application_id, kind, stage_id, "
+                "occurred_at, created_at) VALUES (%s, 'applied', %s, %s, %s)",
+                (application_id, applied_stage["id"], fields["applied_at"], now),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"id": application_id, "job_id": job_id, "stage": applied_stage["slug"]}
+
+
+def transition(conn, application_id: int, parsed: dict, *, now: datetime | None = None) -> dict:
+    """Record a stage change, and advance the denormalised current stage with it.
+
+    The UPDATE is guarded by `stage_at <= occurred_at` so that back-filling
+    history cannot demote a live application: recording last Tuesday's recruiter
+    call on a job already at technical interview appends to the timeline and
+    leaves the current stage alone. `current` says which of the two happened.
+    """
+    now = now or datetime.now()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM stages WHERE id = %s", (parsed["stage_id"],))
+            if cur.fetchone() is None:
+                raise LookupError(f"unknown stage id: {parsed['stage_id']}")
+
+            cur.execute(
+                "INSERT INTO application_events (application_id, kind, stage_id, "
+                "occurred_at, note, next_action, next_action_at, created_at) "
+                "VALUES (%s, 'stage', %s, %s, %s, %s, %s, %s)",
+                (application_id, parsed["stage_id"], parsed["occurred_at"], parsed["note"],
+                 parsed["next_action"], parsed["next_action_at"], now),
+            )
+            event_id = cur.lastrowid
+
+            cur.execute(
+                "UPDATE applications SET stage_id=%s, stage_at=%s, next_action=%s, "
+                "next_action_at=%s, updated_at=%s WHERE id=%s AND stage_at <= %s",
+                (parsed["stage_id"], parsed["occurred_at"], parsed["next_action"],
+                 parsed["next_action_at"], now, application_id, parsed["occurred_at"]),
+            )
+            became_current = cur.rowcount == 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"application_id": application_id, "event_id": event_id,
+            "stage_id": parsed["stage_id"], "current": became_current}
