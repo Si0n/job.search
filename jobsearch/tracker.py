@@ -49,9 +49,14 @@ def _text(payload: dict, field: str, limit: int, *, required: bool = False) -> s
         return None
     if not isinstance(value, str):
         raise ValueError(f"{field} must be a string, got {type(value).__name__}")
-    if len(value) > limit:
-        raise ValueError(f"{field} too long: {len(value)} > {limit}")
-    return value.strip() or None
+    stripped = value.strip()
+    if not stripped:
+        if required:
+            raise ValueError(f"{field} is required")
+        return None
+    if len(stripped) > limit:
+        raise ValueError(f"{field} too long: {len(stripped)} > {limit}")
+    return stripped
 
 
 def _int(payload: dict, field: str, *, required: bool = True) -> int | None:
@@ -60,6 +65,9 @@ def _int(payload: dict, field: str, *, required: bool = True) -> int | None:
         return None
     # bool subclasses int, so {"stage_id": true} would otherwise become stage 1.
     if isinstance(value, bool):
+        raise ValueError(f"invalid {field}: {value!r}")
+    # float is rejected to avoid silent rounding: 45.7 must not become 45.
+    if isinstance(value, float):
         raise ValueError(f"invalid {field}: {value!r}")
     try:
         return int(value)
@@ -81,6 +89,10 @@ def parse_when(value, field: str, *, now: datetime | None = None) -> datetime | 
         when = datetime.fromisoformat(value)
     except ValueError:
         raise ValueError(f"{field} is not an ISO-8601 date: {value!r}") from None
+    # Normalize tz-aware datetimes to naive local time. The system stores only
+    # naive datetimes, and comparing naive with aware datetimes raises TypeError.
+    if when.tzinfo is not None:
+        when = when.astimezone().replace(tzinfo=None)
     if not EARLIEST <= when <= (now or datetime.now()) + timedelta(days=FUTURE_DAYS):
         raise ValueError(f"{field} out of range: {value!r}")
     return when

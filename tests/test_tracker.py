@@ -118,3 +118,51 @@ def test_creating_from_a_url_carries_the_corrected_posting():
 def test_an_unusable_create_request_is_rejected(payload):
     with pytest.raises(ValueError):
         parse_application(body(**payload), now=NOW)
+
+
+def test_a_whitespace_only_label_is_rejected():
+    # A label that is only whitespace must raise ValueError, not pass required check
+    # and then become None downstream.
+    with pytest.raises(ValueError, match="label"):
+        parse_stage_request(body(label="   ", weight=50, kind="active"))
+
+
+def test_a_whitespace_only_required_title_is_rejected():
+    # Same for required fields in parse_application
+    with pytest.raises(ValueError, match="title"):
+        parse_application(body(url="https://acme.com/x", title="   ", company="Y"), now=NOW)
+
+
+@pytest.mark.parametrize("weight_value", [45.7, 45.5, 0.1])
+def test_a_float_weight_is_rejected(weight_value):
+    # Floats must be rejected to avoid silent rounding.
+    with pytest.raises(ValueError, match="weight"):
+        parse_stage_request(body(label="X", weight=weight_value, kind="active"))
+
+
+def test_a_string_integer_weight_is_still_accepted():
+    # Numeric strings should still parse as integers (JSON from browser forms).
+    result = parse_stage_request(body(label="X", weight="45", kind="active"))
+    assert result["weight"] == 45
+
+
+def test_a_float_string_weight_is_rejected():
+    # Strings like "45.7" should not parse as floats and then round.
+    with pytest.raises(ValueError, match="weight"):
+        parse_stage_request(body(label="X", weight="45.7", kind="active"))
+
+
+def test_a_stage_id_boolean_is_still_rejected():
+    # bool subclasses int, so {"stage_id": true} must still raise ValueError.
+    with pytest.raises(ValueError, match="stage_id"):
+        parse_transition(body(stage_id=True), now=NOW)
+
+
+def test_a_timezone_aware_datetime_is_normalized():
+    # Datetimes with timezone offsets should be converted to naive local time.
+    parsed = parse_transition(body(
+        stage_id=5, next_action_at="2026-09-05T11:00:00+02:00"), now=NOW)
+    # The exact value depends on local timezone, but it should be a naive datetime.
+    assert parsed["next_action_at"].tzinfo is None
+    # Verify it's a datetime object (not None and not raising)
+    assert isinstance(parsed["next_action_at"], datetime)
