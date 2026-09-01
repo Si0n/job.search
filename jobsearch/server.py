@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import socket
 import sys
 import traceback
@@ -95,6 +96,16 @@ def parse_status_request(body: bytes) -> tuple[int, str, str | None]:
     return job_id, status, note
 
 
+ROUTES = [
+    ("GET",  re.compile(r"^/(?:index\.html)?$"),                "page_dashboard"),
+    ("GET",  re.compile(r"^/static/(?P<name>[A-Za-z0-9._-]+)$"), "static_asset"),
+    ("GET",  re.compile(r"^/api/jobs$"),                        "api_jobs"),
+    ("GET",  re.compile(r"^/api/stats$"),                       "api_stats"),
+    ("POST", re.compile(r"^/api/status$"),                      "api_status"),
+    ("POST", re.compile(r"^/api/draft-note$"),                  "api_draft_note"),
+]
+
+
 def _make_handler(settings, port, lan: bool = False):
     # Loaded once at startup, not per request: it never changes while the server
     # runs, and a bad profile should fail loudly at boot rather than on a fetch.
@@ -113,7 +124,37 @@ def _make_handler(settings, port, lan: bool = False):
             self.end_headers()
             self.wfile.write(data)
 
-        def do_GET(self):
+        def _send_bytes(self, code: int, data: bytes, content_type: str,
+                        headers: dict | None = None):
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _body(self, limit: int = 64 * 1024) -> bytes | None:
+            """Read a validated request body, or answer the client and return None.
+
+            CSRF: a cross-origin fetch() sending application/json is preflighted
+            and blocked (this server answers no OPTIONS) — but an HTML form with
+            enctype="text/plain" is not preflighted, and the classic name/value
+            trick makes such a body parse as valid JSON. The whitelist below is
+            what actually stops it; a form can only send urlencoded, multipart,
+            or text/plain, never application/json.
+            """
+            content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            if content_type != "application/json":
+                self._send(415, {"error": "Content-Type must be application/json"})
+                return None
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > limit:
+                self._send(413, {"error": "body too large"})
+                return None
+            return self.rfile.read(length)
+
+        def _dispatch(self, method: str) -> None:
             # Reads are guarded too, not just writes: the dashboard renders the
             # owner's job list and application drafts, so a rebinding attack that
             # only ever GETs still walks off with all of it.
@@ -121,95 +162,70 @@ def _make_handler(settings, port, lan: bool = False):
                 self._send(400, {"error": "invalid host"})
                 return
             parsed = urlparse(self.path)
-            if parsed.path in ("/", "/index.html"):
-                page = (STATIC / "index.html").read_bytes()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(page)))
-                self.end_headers()
-                self.wfile.write(page)
-                return
-
-            if parsed.path == "/api/jobs":
-                params = parse_qs(parsed.query)
-                min_score = params.get("min_score", [None])[0]
-                status_filter = params.get("status", [None])[0]
-                conn = db.connect(settings)
-                try:
-                    jobs, postings = dashboard.fetch_rows(
-                        conn,
-                        min_score=int(min_score) if min_score else None,
-                        status_filter=dashboard.parse_job_filter(status_filter),
-                    )
-                except Exception:
-                    traceback.print_exc(file=sys.stderr)
-                    self._send(400, {"error": "could not load jobs"})
+            for verb, pattern, name in ROUTES:
+                match = pattern.match(parsed.path)
+                if verb == method and match:
+                    getattr(self, name)(match, parsed)
                     return
-                finally:
-                    conn.close()
-                self._send(200, dashboard.build_view(jobs, postings, PROFILE))
-                return
-
-            if parsed.path == "/api/stats":
-                conn = db.connect(settings)
-                try:
-                    stats = dashboard.daily_stats(conn)
-                except Exception:
-                    traceback.print_exc(file=sys.stderr)
-                    self._send(400, {"error": "could not load stats"})
-                    return
-                finally:
-                    conn.close()
-                self._send(200, stats)
-                return
-
             self._send(404, {"error": "not found"})
 
+        def do_GET(self):
+            self._dispatch("GET")
+
         def do_POST(self):
-            if not host_allowed(self.headers.get("Host", ""), port, lan):
-                self._send(400, {"error": "invalid host"})
-                return
-            route = urlparse(self.path).path
-            if route not in ("/api/status", "/api/draft-note"):
+            self._dispatch("POST")
+
+        def page_dashboard(self, match, parsed):
+            self._send_bytes(200, (STATIC / "index.html").read_bytes(),
+                             "text/html; charset=utf-8")
+
+        def static_asset(self, match, parsed):
+            types = {".css": "text/css", ".js": "text/javascript",
+                     ".html": "text/html; charset=utf-8"}
+            path = STATIC / match.group("name")
+            # The regex admits no slash or dot-dot, and resolve() confirms it:
+            # a static route is the classic way to read the rest of the disk.
+            if path.suffix not in types or not path.resolve().is_relative_to(STATIC.resolve()) \
+                    or not path.is_file():
                 self._send(404, {"error": "not found"})
                 return
+            self._send_bytes(200, path.read_bytes(), types[path.suffix])
 
-            # CSRF: a cross-origin fetch() sending application/json is preflighted
-            # and blocked (this server answers no OPTIONS) — but an HTML form with
-            # enctype="text/plain" is not preflighted, and the classic name/value
-            # trick makes such a body parse as valid JSON. The whitelist below is
-            # what actually stops it; a form can only send urlencoded, multipart,
-            # or text/plain, never application/json.
-            content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
-            if content_type != "application/json":
-                self._send(415, {"error": "Content-Type must be application/json"})
+        def api_jobs(self, match, parsed):
+            params = parse_qs(parsed.query)
+            min_score = params.get("min_score", [None])[0]
+            status_filter = params.get("status", [None])[0]
+            conn = db.connect(settings)
+            try:
+                jobs, postings = dashboard.fetch_rows(
+                    conn,
+                    min_score=int(min_score) if min_score else None,
+                    status_filter=dashboard.parse_job_filter(status_filter),
+                )
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                self._send(400, {"error": "could not load jobs"})
                 return
+            finally:
+                conn.close()
+            self._send(200, dashboard.build_view(jobs, postings, PROFILE))
 
-            length = int(self.headers.get("Content-Length") or 0)
-            if length > 64 * 1024:
-                self._send(413, {"error": "body too large"})
+        def api_stats(self, match, parsed):
+            conn = db.connect(settings)
+            try:
+                stats = dashboard.daily_stats(conn)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                self._send(400, {"error": "could not load stats"})
                 return
+            finally:
+                conn.close()
+            self._send(200, stats)
 
-            raw = self.rfile.read(length)
-
-            if route == "/api/draft-note":
-                try:
-                    job_id, note = drafts.parse_note(raw)
-                except ValueError as exc:
-                    self._send(400, {"error": str(exc)})
-                    return
-                conn = db.connect(settings)
-                try:
-                    result = drafts.set_note(conn, job_id, note, PROFILE_HASH)
-                except Exception as exc:
-                    traceback.print_exc(file=sys.stderr)
-                    self._send(400, {"error": f"could not save note ({type(exc).__name__})"})
-                    return
-                finally:
-                    conn.close()
-                self._send(200, result)
+        def api_status(self, match, parsed):
+            raw = self._body()
+            if raw is None:
                 return
-
             try:
                 job_id, status, note = parse_status_request(raw)
             except ValueError as exc:
@@ -227,6 +243,26 @@ def _make_handler(settings, port, lan: bool = False):
                 # should stay visible.
                 traceback.print_exc(file=sys.stderr)
                 self._send(400, {"error": "could not record status (unknown job id?)"})
+                return
+            finally:
+                conn.close()
+            self._send(200, result)
+
+        def api_draft_note(self, match, parsed):
+            raw = self._body()
+            if raw is None:
+                return
+            try:
+                job_id, note = drafts.parse_note(raw)
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            conn = db.connect(settings)
+            try:
+                result = drafts.set_note(conn, job_id, note, PROFILE_HASH)
+            except Exception as exc:
+                traceback.print_exc(file=sys.stderr)
+                self._send(400, {"error": f"could not save note ({type(exc).__name__})"})
                 return
             finally:
                 conn.close()
