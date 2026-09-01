@@ -338,7 +338,7 @@ Per bucket:
 | metric | definition |
 |---|---|
 | sent | applications with `applied_at` in the window |
-| advanced | events into a stage of kind `active` or `won` |
+| advanced | stage moves into a stage of kind `active` or `won`, excluding the event that creates the application |
 | offers | events into kind `won` |
 | lost | events into kind `lost` |
 | response rate | share of that bucket's *sent* that ever left `Applied` |

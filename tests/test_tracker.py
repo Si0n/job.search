@@ -225,9 +225,48 @@ def test_sent_counts_by_applied_at():
 
 def test_advanced_counts_moves_into_active_or_won_stages():
     stats = build_stats(APPS, EVENTS, NOW)
-    # The tech interview on the 1st, and both 'applied' events on the 31st.
-    assert stats["current_week"]["advanced"] == 3
+    # Only the tech interview on the 1st: both 'applied' events on the 31st are
+    # the event create_application writes for a brand-new application, not a
+    # move, so they must not count.
+    assert stats["current_week"]["advanced"] == 1
     assert stats["previous_week"]["advanced"] == 0
+
+
+def test_a_fresh_application_does_not_count_as_advanced():
+    # Reproduces the bug directly: one application, one 'applied' event, zero
+    # actual stage moves — advanced must read 0, not 1.
+    app = {"id": 9, "applied_at": datetime(2026, 8, 31, 9, 0)}
+    events = [{"application_id": 9, "kind": "applied", "occurred_at": datetime(2026, 8, 31, 9, 0),
+               "stage_slug": "applied", "stage_kind": "active", "stage_weight": 10}]
+    stats = build_stats([app], events, NOW)["current_week"]
+    assert stats["sent"] == 1
+    assert stats["advanced"] == 0
+
+
+def test_a_move_back_to_applied_still_counts_as_advanced():
+    # Keyed on event kind, not the 'applied' stage slug: a deliberate move back
+    # to Applied is a 'stage' event, not the creation 'applied' event, so it
+    # must still count.
+    app = {"id": 9, "applied_at": datetime(2026, 8, 25, 9, 0)}
+    events = [{"application_id": 9, "kind": "stage", "occurred_at": datetime(2026, 8, 31, 9, 0),
+               "stage_slug": "applied", "stage_kind": "active", "stage_weight": 10}]
+    assert build_stats([app], events, NOW)["current_week"]["advanced"] == 1
+
+
+def test_offers_counts_moves_into_won_stages():
+    events = [{"application_id": 1, "kind": "stage", "occurred_at": datetime(2026, 8, 31, 12, 0),
+               "stage_slug": "offer", "stage_kind": "won", "stage_weight": 90}]
+    assert build_stats([APPS[0]], events, NOW)["current_week"]["offers"] == 1
+
+
+def test_a_note_is_not_a_response():
+    # A note event has no stage (stage_id is NULL, so stage_slug is None), and
+    # None is not in NO_RESPONSE either — reproduces response_rate flipping
+    # from 0.0 to 1.0 after adding a plain note.
+    app = {"id": 9, "applied_at": datetime(2026, 8, 31, 9, 0)}
+    events = [{"application_id": 9, "kind": "note", "occurred_at": datetime(2026, 8, 31, 10, 0),
+               "stage_slug": None, "stage_kind": None, "stage_weight": None}]
+    assert build_stats([app], events, NOW)["current_week"]["response_rate"] == 0.0
 
 
 def test_a_back_dated_event_lands_in_the_week_it_happened():

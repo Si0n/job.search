@@ -241,14 +241,24 @@ def build_stats(applications: list[dict], events: list[dict], now: datetime) -> 
         window = [e for e in events if start <= _when(e["occurred_at"]) < end]
         responded = sum(
             1 for a in sent
-            if any(e.get("stage_slug") not in NO_RESPONSE
+            # A truthy stage_slug is required first: a `note` event carries no
+            # stage (stage_id is NULL), so its slug is None, and None is not in
+            # NO_RESPONSE either — without this guard a note reads as a reply.
+            if any(e.get("stage_slug") and e.get("stage_slug") not in NO_RESPONSE
                    for e in by_application.get(a["id"], []))
         )
         out[name] = {
             "start": start,
             "end": end,
             "sent": len(sent),
-            "advanced": sum(1 for e in window if e.get("stage_kind") in ("active", "won")),
+            # kind != "applied" excludes the event create_application writes for
+            # every new application — that event lands in the 'applied' stage
+            # (kind 'active'), which would otherwise make every fresh, untouched
+            # application read as having advanced. Keyed on kind rather than the
+            # 'applied' stage slug so a deliberate move back to Applied still
+            # counts as a move.
+            "advanced": sum(1 for e in window
+                            if e.get("kind") != "applied" and e.get("stage_kind") in ("active", "won")),
             "offers": sum(1 for e in window if e.get("stage_kind") == "won"),
             "lost": sum(1 for e in window if e.get("stage_kind") == "lost"),
             "response_rate": round(responded / len(sent), 2) if sent else None,
