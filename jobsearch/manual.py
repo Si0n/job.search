@@ -150,7 +150,12 @@ def from_ats(url: str, *, transport=None) -> dict | None:
     pattern, _vendor, template, reader = next(v for v in ATS_VENDORS if v[1] == vendor)
     try:
         _final, body = safe_fetch_url(template.format(slug=slug, id=job_id), transport=transport)
-    except ValueError:
+    except (ValueError, httpx.HTTPError):
+        # ValueError: safe_fetch_url's own refusals (check_target, body-size cap,
+        # redirect loops). httpx.HTTPError: raise_for_status() on a real vendor
+        # 404/5xx, plus connect errors and timeouts — this codebase's existing
+        # convention around vendor calls (adapters/base.py, harvest.py,
+        # adapters/ats.py). Either way, extract() falls through to the page.
         return None
     try:
         payload = json.loads(body)

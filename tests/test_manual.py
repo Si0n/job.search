@@ -168,12 +168,30 @@ def test_ats_slug_becomes_a_company_name():
     assert manual._company_from_slug(slug) == "Acme Payments"
 
 
-def test_from_ats_degrades_to_the_page_when_the_vendor_call_fails(monkeypatch):
-    # A pulled Greenhouse posting: the board API 404s (safe_fetch_url raises),
-    # but the page itself still parses fine through JSON-LD.
+VENDOR_API_URL = "https://boards-api.greenhouse.io/v1/boards/acme-payments/jobs/4512345"
+
+
+def _vendor_404(url):
+    # What a real vendor 404 actually raises: raise_for_status() on a genuine
+    # httpx.Response, not a bare ValueError — HTTPStatusError's MRO is
+    # HTTPStatusError -> HTTPError -> Exception, so it is not a ValueError.
+    httpx.Response(404, request=httpx.Request("GET", url)).raise_for_status()
+
+
+def test_from_ats_returns_none_when_the_vendor_call_404s(monkeypatch):
     def fake_fetch(url, **kw):
-        if "boards-api.greenhouse.io" in url:
-            raise ValueError("404")
+        _vendor_404(url)
+    monkeypatch.setattr(manual, "safe_fetch_url", fake_fetch)
+    assert manual.from_ats("https://boards.greenhouse.io/acme-payments/jobs/4512345") is None
+
+
+def test_from_ats_degrades_to_the_page_when_the_vendor_call_fails(monkeypatch):
+    # A pulled Greenhouse posting: the board API 404s for real, but the page
+    # itself still parses fine through JSON-LD — extract() must degrade to it
+    # rather than let the HTTPStatusError sail past from_ats and extract.
+    def fake_fetch(url, **kw):
+        if url == VENDOR_API_URL:
+            _vendor_404(url)
         return ("https://boards.greenhouse.io/acme-payments/jobs/4512345", fixture("jsonld.html"))
     monkeypatch.setattr(manual, "safe_fetch_url", fake_fetch)
     result = manual.extract("https://boards.greenhouse.io/acme-payments/jobs/4512345")
