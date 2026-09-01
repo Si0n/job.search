@@ -95,8 +95,9 @@ function renderStats(stats) {
   const cell = (name, label) => {
     const s = stats[name];
     const rate = s.response_rate === null ? "—" : Math.round(s.response_rate * 100) + "%";
-    return `<span>${label}: <b>${s.sent}</b> sent · <b>${s.advanced}</b> advanced ·
-            <b>${s.offers}</b> offers · <b>${s.lost}</b> lost · replied <b>${rate}</b></span>`;
+    return `<div class="stat"><span class="stat-label">${label}</span>
+            <b>${s.sent}</b> sent · <b>${s.advanced}</b> advanced ·
+            <b>${s.offers}</b> offers · <b>${s.lost}</b> lost · replied <b>${rate}</b></div>`;
   };
   $("#stats").innerHTML = [
     cell("previous_day", "yesterday"), cell("current_week", "this week"),

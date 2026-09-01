@@ -14,7 +14,13 @@ body{margin:0;background:var(--bg);color:var(--ink);
 header{position:sticky;top:0;z-index:5;background:var(--bg);
   border-bottom:1px solid var(--line);padding:14px 20px}
 h1{margin:0 0 10px;font-size:17px;letter-spacing:-.01em}
+button{font:inherit;font-size:13px;padding:5px 12px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--line);background:transparent;color:var(--ink)}
+button:hover{border-color:var(--accent);color:var(--accent)}
 .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.controls input,.controls select{background:var(--card);color:var(--ink);
+  border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit}
+.controls input[type=search]{min-width:230px;flex:1}
 .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px}
 .tag{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);
   color:var(--muted)}
@@ -46,6 +52,10 @@ h1{margin:0 0 10px;font-size:17px;letter-spacing:-.01em}
 .tabs button{background:var(--card);color:var(--muted);border:1px solid var(--line);
   border-radius:7px;padding:6px 12px;font:inherit;cursor:pointer}
 .tabs button.on{color:var(--ink);border-color:var(--accent)}
-.stats{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:10px}
-.stats b{color:var(--ink);font-weight:650}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:6px 10px;
+  font-size:12.5px;color:var(--muted)}
+.stat b{color:var(--ink);font-weight:650}
+.stat-label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+  color:var(--muted);opacity:.8;margin-bottom:3px}
 .nav{margin-left:auto;font-size:13px}
