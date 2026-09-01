@@ -5,7 +5,7 @@ import json
 import sys
 from typing import Any
 
-from jobsearch.models import APPLICATION_STATUSES
+from jobsearch.models import TRIAGE_STATUSES
 
 
 def emit(payload: Any) -> None:
@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
                                    "(no password; anyone on the wifi can read and triage)")
 
     list_parser = sub.add_parser("list", help="list jobs")
-    list_parser.add_argument("--status", choices=APPLICATION_STATUSES)
+    list_parser.add_argument("--status", choices=TRIAGE_STATUSES)
     list_parser.add_argument("--min-score", type=int)
     list_parser.add_argument("--since")
     list_parser.add_argument("--source")
@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = sub.add_parser("status", help="set application status")
     status_parser.add_argument("--id", type=int, required=True)
-    status_parser.add_argument("--status", required=True, choices=APPLICATION_STATUSES)
+    status_parser.add_argument("--status", required=True, choices=TRIAGE_STATUSES)
     status_parser.add_argument("--note")
 
     sources_parser = sub.add_parser("sources", help="show source health")

@@ -47,7 +47,7 @@ SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.arrangement, j.emp
        d.profile_hash AS draft_hash
 FROM jobs j
 LEFT JOIN scores sc      ON sc.id = j.latest_score_id
-LEFT JOIN applications a ON a.job_id = j.id
+LEFT JOIN triage a       ON a.job_id = j.id
 LEFT JOIN drafts d       ON d.job_id = j.id
 WHERE j.inactive_at IS NULL AND j.filtered_at IS NULL
 """
@@ -64,7 +64,7 @@ ORDER BY js.job_id, s.priority
 
 # The dashboard's status filter vocabulary. "untriaged" is the working queue and
 # stays the default; "all" drops the condition entirely. Everything else matches a
-# single applications.status value, so this set is also the whitelist that keeps an
+# single triage.status value, so this set is also the whitelist that keeps an
 # arbitrary query string out of the SQL.
 JOB_FILTERS = ("untriaged", "interested", "applied", "skipped", "all")
 
@@ -120,10 +120,10 @@ _TODAY_STATS_SQL = {
     # counting it here would inflate the number of jobs actually worth reading.
     "above": "SELECT COUNT(DISTINCT job_id) FROM scores "
              "WHERE DATE(scored_at) = CURDATE() AND `pass` = 2 AND score >= %s",
-    # applications holds one row per job, overwritten in place, so this counts
+    # triage holds one row per job, overwritten in place, so this counts
     # jobs whose status was last touched today — not every triage action taken
     # today. Re-marking a job tomorrow moves it out of today's number.
-    "triaged": "SELECT COUNT(*) FROM applications WHERE DATE(updated_at) = CURDATE()",
+    "triaged": "SELECT COUNT(*) FROM triage WHERE DATE(updated_at) = CURDATE()",
 }
 
 

@@ -12,9 +12,9 @@ from urllib.parse import parse_qs, urlparse
 
 from jobsearch import dashboard, db, drafts, store
 from jobsearch.profile import load_profile
-from jobsearch.models import APPLICATION_STATUSES
+from jobsearch.models import TRIAGE_STATUSES
 
-VALID_STATUSES = set(APPLICATION_STATUSES)
+VALID_STATUSES = set(TRIAGE_STATUSES)
 MAX_NOTE = 2000
 STATIC = Path(__file__).parent / "static"
 
@@ -221,7 +221,7 @@ def _make_handler(settings, port, lan: bool = False):
                 result = store.set_status(conn, job_id, status, note)
             except Exception:
                 # A syntactically valid but nonexistent job id trips the
-                # applications.job_id foreign key. That's a client error, not a
+                # triage.job_id foreign key. That's a client error, not a
                 # server crash — surface it the same way parse_status_request's
                 # ValueErrors are surfaced, but log it since a real DB failure
                 # should stay visible.

@@ -292,7 +292,10 @@ normalized profile at load time. `profile_version` is a convenience label. Compa
 score history across a profile edit keys on the hash, so a forgotten version bump cannot
 silently make historical data misleading.
 
-### `applications`
+### `triage`
+
+Renamed from `applications` in migration 016; the tracker's own tables are
+specified in `2026-09-01-application-tracker-design.md`.
 
 | column | type | notes |
 |---|---|---|

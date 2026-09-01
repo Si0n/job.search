@@ -26,7 +26,7 @@ def set_status(conn, job_id: int, status: str, note: str | None = None) -> dict:
     now = datetime.now()
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO applications (job_id, status, note, updated_at) "
+            "INSERT INTO triage (job_id, status, note, updated_at) "
             "VALUES (%s, %s, %s, %s) "
             "ON DUPLICATE KEY UPDATE status=VALUES(status), note=VALUES(note), "
             "updated_at=VALUES(updated_at)",
@@ -79,7 +79,7 @@ def list_jobs(conn, *, status=None, min_score=None, since=None, source=None,
             "       GROUP_CONCAT(DISTINCT s.name) AS sources "
             "FROM jobs j "
             "LEFT JOIN scores sc      ON sc.id = j.latest_score_id "
-            "LEFT JOIN applications a ON a.job_id = j.id "
+            "LEFT JOIN triage a       ON a.job_id = j.id "
             "JOIN job_sources js      ON js.job_id = j.id AND js.inactive_at IS NULL "
             "JOIN sources s           ON s.id = js.source_id "
             f"WHERE {' AND '.join(clauses)} "
