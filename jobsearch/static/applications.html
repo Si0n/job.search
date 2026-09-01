@@ -94,7 +94,7 @@ async function refresh() {
       getJSON("/api/tracker-stats")]);
     APPS = apps;
     renderStats(stats);
-    VIEW === "list" ? renderList() : renderActivity();
+    if (VIEW === "list") renderList(); else await renderActivity();
   } catch (err) { showLoadError(err); }
 }
 
@@ -290,6 +290,9 @@ $("#kind").addEventListener("change", refresh);
 ["#q", "#attention"].forEach(s => $(s).addEventListener("input", renderList));
 $("#add").addEventListener("click", () => $("#new").classList.toggle("on"));
 $("#u-look").addEventListener("click", lookup);
+// LOOKED_UP pairs a description/salary with the URL that produced them; edit the
+// URL after a lookup and it must not still submit with the old page's details.
+$("#u-url").addEventListener("input", () => { window.LOOKED_UP = null; });
 $("#u-save").addEventListener("click", saveApplication);
 $("#p-close").addEventListener("click", closePanel);
 $("#backdrop").addEventListener("click", closePanel);

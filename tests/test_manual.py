@@ -168,6 +168,19 @@ def test_ats_slug_becomes_a_company_name():
     assert manual._company_from_slug(slug) == "Acme Payments"
 
 
+def test_from_ats_degrades_to_the_page_when_the_vendor_call_fails(monkeypatch):
+    # A pulled Greenhouse posting: the board API 404s (safe_fetch_url raises),
+    # but the page itself still parses fine through JSON-LD.
+    def fake_fetch(url, **kw):
+        if "boards-api.greenhouse.io" in url:
+            raise ValueError("404")
+        return ("https://boards.greenhouse.io/acme-payments/jobs/4512345", fixture("jsonld.html"))
+    monkeypatch.setattr(manual, "safe_fetch_url", fake_fetch)
+    result = manual.extract("https://boards.greenhouse.io/acme-payments/jobs/4512345")
+    assert result["via"] == "jsonld"
+    assert result["title"] == "Senior Backend Engineer"
+
+
 def test_extract_takes_the_ats_path_and_still_flags_review(monkeypatch):
     payload = json.dumps({
         "id": 4512345,

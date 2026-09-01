@@ -139,12 +139,19 @@ def _company_from_slug(slug: str) -> str:
 
 
 def from_ats(url: str, *, transport=None) -> dict | None:
+    """The vendor's own API for one posting, or None if the URL isn't a known
+    ATS board or the vendor call fails — either way `extract`'s own docstring
+    promises a fall-through to the page fetch, and a pulled Greenhouse/Lever/
+    Ashby posting still has a page that parses fine through JSON-LD."""
     target = ats_target(url)
     if not target:
         return None
     vendor, slug, job_id = target
     pattern, _vendor, template, reader = next(v for v in ATS_VENDORS if v[1] == vendor)
-    _final, body = safe_fetch_url(template.format(slug=slug, id=job_id), transport=transport)
+    try:
+        _final, body = safe_fetch_url(template.format(slug=slug, id=job_id), transport=transport)
+    except ValueError:
+        return None
     try:
         payload = json.loads(body)
     except ValueError:
