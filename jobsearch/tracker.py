@@ -534,6 +534,42 @@ def fetch_activity(conn, limit: int = 100) -> list[dict]:
         return list(cur.fetchall())
 
 
+EDITABLE = ("cover_letter", "why_company", "salary_expectation", "notice_period")
+
+
+def parse_edit(raw: str | bytes) -> dict:
+    """Validate an edit. Only the submission fields are editable — stage lives in
+    the timeline, and applied_at is history."""
+    payload = _object(raw)
+    unexpected = sorted(set(payload) - set(EDITABLE) - {"cv_file_id", "answers"})
+    if unexpected:
+        raise ValueError(f"unexpected key(s): {', '.join(unexpected)}")
+    limits = {"cover_letter": MAX_TEXT, "why_company": MAX_TEXT,
+              "salary_expectation": MAX_SHORT, "notice_period": MAX_SHORT}
+    fields = {name: _text(payload, name, limits[name]) for name in EDITABLE if name in payload}
+    if "cv_file_id" in payload:
+        fields["cv_file_id"] = _int(payload, "cv_file_id", required=False)
+    if "answers" in payload:
+        fields["answers"] = parse_answers(payload.get("answers"))
+    if not fields:
+        raise ValueError("nothing to update")
+    return fields
+
+
+def update_application(conn, application_id: int, fields: dict) -> dict:
+    # The column list comes only from EDITABLE-derived keys in `fields` (parse_edit
+    # enforces the whitelist); every value is still bound as a parameter below.
+    assignments = ", ".join(f"{name} = %s" for name in fields)
+    values = [json.dumps(v) if k == "answers" and v is not None else v
+              for k, v in fields.items()]
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE applications SET {assignments}, updated_at = %s WHERE id = %s",
+                    [*values, datetime.now(), application_id])
+        changed = cur.rowcount
+    conn.commit()
+    return {"id": application_id, "updated": bool(changed), "fields": sorted(fields)}
+
+
 def fetch_stats_rows(conn) -> tuple[list[dict], list[dict]]:
     """Everything build_stats needs, in two flat reads.
 

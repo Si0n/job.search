@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import re
@@ -7,13 +8,14 @@ import socket
 import sys
 import traceback
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from jobsearch import dashboard, db, drafts, store
+from jobsearch import dashboard, db, drafts, store, tracker
 from jobsearch.profile import load_profile
-from jobsearch.models import TRIAGE_STATUSES
+from jobsearch.models import RawPosting, TRIAGE_STATUSES
 
 VALID_STATUSES = set(TRIAGE_STATUSES)
 MAX_NOTE = 2000
@@ -103,6 +105,16 @@ ROUTES = [
     ("GET",  re.compile(r"^/api/stats$"),                       "api_stats"),
     ("POST", re.compile(r"^/api/status$"),                      "api_status"),
     ("POST", re.compile(r"^/api/draft-note$"),                  "api_draft_note"),
+    ("GET",  re.compile(r"^/applications$"),                       "page_applications"),
+    ("GET",  re.compile(r"^/api/stages$"),                         "api_stages"),
+    ("GET",  re.compile(r"^/api/applications$"),                   "api_applications"),
+    ("GET",  re.compile(r"^/api/applications/(?P<id>\d+)$"),       "api_application"),
+    ("GET",  re.compile(r"^/api/activity$"),                       "api_activity"),
+    ("GET",  re.compile(r"^/api/tracker-stats$"),                  "api_tracker_stats"),
+    ("POST", re.compile(r"^/api/stages$"),                         "post_stage"),
+    ("POST", re.compile(r"^/api/applications$"),                   "post_application"),
+    ("POST", re.compile(r"^/api/applications/(?P<id>\d+)$"),       "post_application_edit"),
+    ("POST", re.compile(r"^/api/applications/(?P<id>\d+)/stage$"), "post_application_stage"),
 ]
 
 
@@ -267,6 +279,126 @@ def _make_handler(settings, port, lan: bool = False):
             finally:
                 conn.close()
             self._send(200, result)
+
+        def _with_conn(self, work, error: str):
+            conn = db.connect(settings)
+            try:
+                payload = work(conn)
+            except (ValueError, LookupError) as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                self._send(400, {"error": error})
+                return
+            finally:
+                conn.close()
+            self._send(200, payload)
+
+        def page_applications(self, match, parsed):
+            self._send_bytes(200, (STATIC / "applications.html").read_bytes(),
+                             "text/html; charset=utf-8")
+
+        def api_stages(self, match, parsed):
+            self._with_conn(tracker.list_stages, "could not load stages")
+
+        def api_applications(self, match, parsed):
+            kind = parse_qs(parsed.query).get("kind", [None])[0]
+            self._with_conn(
+                lambda conn: tracker.build_list(tracker.fetch_list(conn, kind=kind),
+                                                datetime.now()),
+                "could not load applications")
+
+        def api_application(self, match, parsed):
+            application_id = int(match.group("id"))
+
+            def work(conn):
+                row, events = tracker.fetch_detail(conn, application_id)
+                if row is None:
+                    raise LookupError(f"no application {application_id}")
+                return tracker.build_detail(row, events, datetime.now())
+
+            self._with_conn(work, "could not load the application")
+
+        def api_activity(self, match, parsed):
+            limit = parse_qs(parsed.query).get("limit", ["100"])[0]
+            self._with_conn(
+                lambda conn: tracker.build_activity(
+                    tracker.fetch_activity(conn, int(limit) if limit.isdigit() else 100)),
+                "could not load activity")
+
+        def api_tracker_stats(self, match, parsed):
+            def work(conn):
+                applications, events = tracker.fetch_stats_rows(conn)
+                return tracker.build_stats(applications, events, datetime.now())
+
+            self._with_conn(work, "could not load statistics")
+
+        def post_stage(self, match, parsed):
+            raw = self._body()
+            if raw is None:
+                return
+            try:
+                parsed_stage = tracker.parse_stage_request(raw)
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            self._with_conn(lambda conn: tracker.create_stage(conn, parsed_stage),
+                            "could not create the stage")
+
+        def post_application(self, match, parsed):
+            raw = self._body()
+            if raw is None:
+                return
+            try:
+                request = tracker.parse_application(raw)
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+
+            def work(conn):
+                job_id = request["job_id"]
+                if job_id is None:
+                    posting = request["posting"]
+                    source = store.source_by_name(conn, "manual")
+                    # The URL's digest is the external id, so re-pasting the same
+                    # link updates that posting instead of creating a second one.
+                    raw_posting = RawPosting(
+                        external_id=hashlib.sha256(posting["url"].encode()).hexdigest()[:32],
+                        url=posting["url"], title=posting["title"], company=posting["company"],
+                        description=posting["description"], location=posting["location"],
+                        salary_raw=posting["salary_raw"], posted_at=posting["posted_at"])
+                    job_id, _is_new = store.upsert_posting(
+                        conn, source, raw_posting, None, settings.rates, datetime.now())
+                return tracker.create_application(conn, job_id, request["application"])
+
+            self._with_conn(work, "could not create the application (already tracked?)")
+
+        def post_application_edit(self, match, parsed):
+            raw = self._body()
+            if raw is None:
+                return
+            try:
+                fields = tracker.parse_edit(raw)
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            application_id = int(match.group("id"))
+            self._with_conn(lambda conn: tracker.update_application(conn, application_id, fields),
+                            "could not update the application")
+
+        def post_application_stage(self, match, parsed):
+            raw = self._body()
+            if raw is None:
+                return
+            try:
+                transition = tracker.parse_transition(raw)
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            application_id = int(match.group("id"))
+            self._with_conn(lambda conn: tracker.transition(conn, application_id, transition),
+                            "could not record the transition")
 
         def log_message(self, fmt, *args):
             # Default logging writes to stderr on every request, including the
