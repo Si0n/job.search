@@ -217,3 +217,57 @@ def save_draft(args) -> dict:
         return drafts.save(conn, args.id, blocks, profile.hash)
     finally:
         conn.close()
+
+
+def apply_url(args) -> dict:
+    """Look a posting up, store it as a manual job, and open an application on it.
+
+    Mirrors server.post_application's create path: job_id_for_url is checked
+    before the upsert, because fingerprinting can't see the pasted URL — without
+    this check, a URL already in job_sources would upsert into a twin job
+    carrying no score and no draft instead of attaching to the existing one.
+    """
+    import hashlib
+    from datetime import datetime
+
+    from jobsearch import manual, store, tracker
+    from jobsearch.models import RawPosting
+
+    settings = load_settings(args.env)
+    found = manual.extract(args.url)
+    if not found.get("title") or not found.get("company"):
+        raise SystemExit(f"could not read a title and company from {args.url} — "
+                         "use the dashboard, which lets you correct them")
+    conn = db.connect(settings)
+    try:
+        job_id = tracker.job_id_for_url(conn, found["url"])
+        if job_id is None:
+            source = store.source_by_name(conn, "manual")
+            posting = RawPosting(
+                external_id=hashlib.sha256(found["url"].encode()).hexdigest()[:32],
+                url=found["url"], title=found["title"], company=found["company"],
+                description=found.get("description") or "", location=found.get("location"),
+                salary_raw=found.get("salary_raw"), posted_at=found.get("posted_at"))
+            job_id, _is_new = store.upsert_posting(
+                conn, source, posting, None, settings.rates, datetime.now())
+        applied_at = (tracker.parse_when(args.applied_at, "applied_at")
+                      if args.applied_at else datetime.now())
+        result = tracker.create_application(conn, job_id, {"applied_at": applied_at})
+    finally:
+        conn.close()
+    return {"command": "apply", "needs_review": found.get("needs_review"), **result}
+
+
+def applications(args) -> dict:
+    from datetime import datetime
+
+    from jobsearch import tracker
+
+    settings = load_settings(args.env)
+    conn = db.connect(settings)
+    try:
+        rows = tracker.fetch_list(conn, kind=args.kind)
+        return {"command": "applications",
+                "applications": tracker.build_list(rows, datetime.now())}
+    finally:
+        conn.close()

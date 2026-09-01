@@ -84,6 +84,13 @@ def build_parser() -> argparse.ArgumentParser:
     repair_parser = sub.add_parser("repair-context", help="what a repair proposal needs")
     repair_parser.add_argument("--source", required=True)
 
+    apply_parser = sub.add_parser("apply", help="record an application from a posting URL")
+    apply_parser.add_argument("--url", required=True)
+    apply_parser.add_argument("--applied-at", dest="applied_at")
+
+    apps_parser = sub.add_parser("applications", help="list tracked applications")
+    apps_parser.add_argument("--kind", choices=["active", "won", "lost"])
+
     return parser
 
 
@@ -191,6 +198,18 @@ def main(argv: list[str] | None = None) -> int:
         from jobsearch import commands
 
         emit(commands.repair_context(args))
+        return 0
+
+    if args.command == "apply":
+        from jobsearch import commands
+
+        emit(commands.apply_url(args))
+        return 0
+
+    if args.command == "applications":
+        from jobsearch import commands
+
+        emit(commands.applications(args))
         return 0
 
     parser.error(f"unhandled command: {args.command}")

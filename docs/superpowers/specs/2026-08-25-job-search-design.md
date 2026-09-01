@@ -632,6 +632,8 @@ jobsearch status --id N --status S [--note "..."]
 jobsearch list [--status S] [--min-score N] [--since D] [--source X]
 jobsearch sources [--degraded]
 jobsearch prune-cache
+jobsearch apply --url <url> [--applied-at YYYY-MM-DD]   record an application from a posting URL
+jobsearch applications [--kind active|won|lost]         list tracked applications
 ```
 
 All commands emit JSON so Claude consumes them without parsing prose.
