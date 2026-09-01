@@ -289,7 +289,14 @@ def _make_handler(settings, port, lan: bool = False):
             conn = db.connect(settings)
             try:
                 payload = work(conn)
-            except (ValueError, LookupError) as exc:
+            except LookupError as exc:
+                # A missing id is a 404, same as api_cv_download's explicit one
+                # for the same class of mistake — not a 400, which the client
+                # error below still owns for a request that is malformed rather
+                # than merely pointed at something absent.
+                self._send(404, {"error": str(exc)})
+                return
+            except ValueError as exc:
                 self._send(400, {"error": str(exc)})
                 return
             except Exception:
