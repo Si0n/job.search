@@ -11,6 +11,13 @@ from jobsearch.adapters.base import TIMEOUT, USER_AGENT
 MAX_BODY = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
 ALLOWED_SCHEMES = ("http", "https")
+# RFC 6052 well-known prefix for NAT64. is_global does not catch this: Python
+# decodes the IPv4-mapped (::ffff:10.0.0.5) and 6to4 (2002:...) embeddings and
+# re-checks the embedded address, but not this one — 64:ff9b::169.254.169.254
+# reports is_global=True untouched. Reject the whole prefix rather than trying
+# to decode and re-check the embedded IPv4: there's no legitimate reason for
+# this tool to fetch through a NAT64 translator.
+NAT64_PREFIX = ipaddress.IPv6Network("64:ff9b::/96")
 
 
 def check_target(url: str) -> str:
@@ -21,6 +28,12 @@ def check_target(url: str) -> str:
     dashboard answers on the LAN with no password. `is_global` is what draws
     the line — it already excludes loopback, private, link-local (including the
     169.254.169.254 metadata address), and reserved space.
+
+    Known gap, accepted: this resolves the hostname and httpx resolves it again
+    on connect, with nothing pinning the two to the same address, so a
+    short-TTL DNS rebind between the two calls can defeat the check. Closing it
+    properly means connecting through a custom transport pinned to the address
+    validated here, which was ruled out as more than this tool needs to be.
     """
     parsed = urlparse(url)
     if parsed.scheme.lower() not in ALLOWED_SCHEMES:
@@ -37,7 +50,8 @@ def check_target(url: str) -> str:
 
     for info in infos:
         address = ipaddress.ip_address(info[4][0])
-        if not address.is_global or address.is_multicast:
+        in_nat64 = isinstance(address, ipaddress.IPv6Address) and address in NAT64_PREFIX
+        if not address.is_global or address.is_multicast or in_nat64:
             raise ValueError(f"refusing to fetch a non-public address: {host} -> {address}")
     return url
 

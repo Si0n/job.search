@@ -17,7 +17,8 @@ def resolves_to(*ips):
 
 
 @pytest.mark.parametrize("ip", ["127.0.0.1", "10.0.0.5", "192.168.1.10",
-                                "169.254.169.254", "172.16.0.1", "::1"])
+                                "169.254.169.254", "172.16.0.1", "::1",
+                                "64:ff9b::a9fe:a9fe"])
 def test_an_address_off_the_public_internet_is_refused(monkeypatch, ip):
     monkeypatch.setattr(manual.socket, "getaddrinfo", resolves_to(ip))
     with pytest.raises(ValueError, match="non-public"):
