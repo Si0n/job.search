@@ -130,7 +130,7 @@ function visible() {
 function renderList() {
   const rows = visible();
   $("#list").innerHTML = rows.length ? rows.map(card).join("")
-    : '<div class="empty">No applications yet. Add one with “+ add by URL”, or mark a job applied in the inbox.</div>';
+    : '<div class="empty">No applications yet. Add one with “+ add by URL”, or track a job from the inbox.</div>';
   $("#list").querySelectorAll("article.card").forEach(el =>
     el.addEventListener("click", () => openPanel(Number(el.dataset.id))));
 }

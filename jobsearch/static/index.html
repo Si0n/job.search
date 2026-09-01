@@ -192,6 +192,8 @@ function render() {
     }));
   $("#list").querySelectorAll("button[data-id]").forEach(b =>
     b.addEventListener("click", () => mark(Number(b.dataset.id), b.dataset.status)));
+  $("#list").querySelectorAll("button.track").forEach(b =>
+    b.addEventListener("click", () => trackApplication(Number(b.dataset.track), b)));
 }
 
 function card(j) {
@@ -251,8 +253,31 @@ function card(j) {
       <button data-id="${j.id}" data-status="applied">Applied</button>
       <button data-id="${j.id}" data-status="skipped">Skip</button>
       <button class="open-draft" data-job="${j.id}">${j.draft ? "application ▸" : "draft…"}</button>
+      <button class="track" data-track="${j.id}">track application</button>
     </div>
   </article>`;
+}
+
+// Prefills the application with the cover letter and "why fit" text already
+// written for this job — the spec's "prefill from draft" — so tracking a job
+// that was drafted for doesn't start the application from a blank page.
+async function trackApplication(jobId, btn) {
+  const job = JOBS.find(j => j.id === jobId);
+  const draft = job && job.draft;
+  btn.disabled = true;
+  btn.textContent = "tracking…";
+  try {
+    await postJSON("/api/applications", {
+      job_id: jobId,
+      cover_letter: draft?.cover_letter || undefined,
+      why_company: draft?.why_fit || undefined,
+    });
+    btn.textContent = "tracked ✓";
+  } catch (err) {
+    const already = /already tracked/i.test(err.message);
+    btn.textContent = already ? "already tracked" : "failed — " + err.message;
+    btn.disabled = already;
+  }
 }
 
 async function mark(id, status) {
