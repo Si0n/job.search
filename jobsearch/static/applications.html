@@ -15,18 +15,16 @@ main{padding:18px 20px;max-width:1000px;margin:0 auto;display:flex;flex-directio
 form.new{display:none;gap:8px;flex-direction:column;background:var(--card);
   border:1px solid var(--line);border-radius:11px;padding:14px}
 form.new.on{display:flex}
-form.new input,form.new textarea,form.new select{background:var(--bg);color:var(--ink);
-  border:1px solid var(--line);border-radius:7px;padding:7px 9px;font:inherit;width:100%}
-form.new textarea{min-height:70px;resize:vertical}
 .warn{color:var(--warn);font-size:12.5px}
 .tl{border-left:2px solid var(--line);padding-left:12px;margin-top:12px}
 .tl .ev{margin-bottom:12px}
 .tl .when{font-size:11.5px;color:var(--muted)}
 .txform{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .txform label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+form.new input,form.new textarea,form.new select,
 .txform input,.txform textarea,.txform select{background:var(--bg);color:var(--ink);
   border:1px solid var(--line);border-radius:7px;padding:7px 9px;font:inherit;width:100%}
-.txform textarea{min-height:70px;resize:vertical}
+form.new textarea,.txform textarea{min-height:70px;resize:vertical}
 </style>
 </head>
 <body>
@@ -79,21 +77,32 @@ let APPS = [], STAGES = [], CVS = [], VIEW = "list", OPEN = null;
 const fmtDate = s => s ? String(s).slice(0, 10) : "";
 
 async function boot() {
-  [STAGES, CVS] = await Promise.all([getJSON("/api/stages"), getJSON("/api/cvs")]);
-  $("#u-cv").innerHTML = '<option value="">no CV</option>' +
-    CVS.map(c => `<option value="${c.id}">${esc(c.filename)}</option>`).join("");
-  $("#u-applied").value = new Date().toISOString().slice(0, 10);
-  await refresh();
+  try {
+    [STAGES, CVS] = await Promise.all([getJSON("/api/stages"), getJSON("/api/cvs")]);
+    $("#u-cv").innerHTML = '<option value="">no CV</option>' +
+      CVS.map(c => `<option value="${c.id}">${esc(c.filename)}</option>`).join("");
+    $("#u-applied").value = new Date().toISOString().slice(0, 10);
+    await refresh();
+  } catch (err) { showLoadError(err); }
 }
 
 async function refresh() {
-  const kind = $("#kind").value;
-  const [apps, stats] = await Promise.all([
-    getJSON("/api/applications" + (kind ? "?kind=" + kind : "")),
-    getJSON("/api/tracker-stats")]);
-  APPS = apps;
-  renderStats(stats);
-  VIEW === "list" ? renderList() : renderActivity();
+  try {
+    const kind = $("#kind").value;
+    const [apps, stats] = await Promise.all([
+      getJSON("/api/applications" + (kind ? "?kind=" + kind : "")),
+      getJSON("/api/tracker-stats")]);
+    APPS = apps;
+    renderStats(stats);
+    VIEW === "list" ? renderList() : renderActivity();
+  } catch (err) { showLoadError(err); }
+}
+
+// Catching inside boot()/refresh() rather than at each call site covers every
+// caller (initial boot, the #kind filter, and the List/Activity tabs) with
+// one path, instead of repeating .catch() at each one.
+function showLoadError(err) {
+  $("#list").innerHTML = `<div class="empty">Could not load — ${esc(err.message)}</div>`;
 }
 
 function renderStats(stats) {

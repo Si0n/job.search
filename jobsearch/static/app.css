@@ -17,6 +17,7 @@ h1{margin:0 0 10px;font-size:17px;letter-spacing:-.01em}
 button{font:inherit;font-size:13px;padding:5px 12px;border-radius:7px;cursor:pointer;
   border:1px solid var(--line);background:transparent;color:var(--ink)}
 button:hover{border-color:var(--accent);color:var(--accent)}
+a{color:var(--accent)}
 .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .controls input,.controls select{background:var(--card);color:var(--ink);
   border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit}
