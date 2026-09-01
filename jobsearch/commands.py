@@ -260,8 +260,12 @@ def apply_url(args) -> dict:
             job_id, _is_new = store.upsert_posting(
                 conn, source, posting, None, settings.rates, datetime.now())
             source_kind = "fetched"
-        applied_at = (tracker.parse_when(args.applied_at, "applied_at")
-                      if args.applied_at else datetime.now())
+        # Today at midnight, not datetime.now(): the rest of this tool only ever
+        # offers date granularity for applied_at (the dashboard's date input),
+        # so a CLI apply with no explicit date should match rather than carry a
+        # time-of-day nothing else records.
+        applied_at = (tracker.parse_when(args.applied_at, "applied_at") if args.applied_at
+                      else datetime.now().replace(hour=0, minute=0, second=0, microsecond=0))
         result = tracker.create_application(conn, job_id, {"applied_at": applied_at})
     finally:
         conn.close()

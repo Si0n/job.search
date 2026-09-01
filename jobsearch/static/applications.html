@@ -208,14 +208,21 @@ async function openPanel(id) {
 
 async function saveTransition() {
   try {
-    await postJSON(`/api/applications/${OPEN}/stage`, {
+    const result = await postJSON(`/api/applications/${OPEN}/stage`, {
       stage_id: Number($("#t-stage").value),
       occurred_at: $("#t-when").value || undefined,
       note: $("#t-note").value || undefined,
       next_action: $("#t-action").value || undefined,
       next_action_at: $("#t-action-at").value || undefined,
     });
-    closePanel();
+    // current: false means stage_at <= occurred_at failed — the event was
+    // recorded but the card's current stage is later than this date, so the
+    // panel must say which of the two happened rather than close silently.
+    if (result.current) {
+      closePanel();
+    } else {
+      $("#t-err").textContent = "recorded, but the current stage is later than this date";
+    }
     await refresh();
   } catch (err) { $("#t-err").textContent = err.message; }
 }
