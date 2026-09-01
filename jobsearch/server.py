@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from jobsearch import dashboard, db, drafts, store, tracker
+from jobsearch import cv, dashboard, db, drafts, manual, store, tracker
 from jobsearch.profile import load_profile
 from jobsearch.models import RawPosting, TRIAGE_STATUSES
 
@@ -115,6 +115,10 @@ ROUTES = [
     ("POST", re.compile(r"^/api/applications$"),                   "post_application"),
     ("POST", re.compile(r"^/api/applications/(?P<id>\d+)$"),       "post_application_edit"),
     ("POST", re.compile(r"^/api/applications/(?P<id>\d+)/stage$"), "post_application_stage"),
+    ("GET",  re.compile(r"^/api/cvs$"),               "api_cvs"),
+    ("GET",  re.compile(r"^/api/cv/(?P<id>\d+)$"),    "api_cv_download"),
+    ("POST", re.compile(r"^/api/cv$"),                "post_cv"),
+    ("POST", re.compile(r"^/api/lookup-url$"),        "post_lookup_url"),
 ]
 
 
@@ -405,6 +409,62 @@ def _make_handler(settings, port, lan: bool = False):
             application_id = int(match.group("id"))
             self._with_conn(lambda conn: tracker.transition(conn, application_id, transition),
                             "could not record the transition")
+
+        def api_cvs(self, match, parsed):
+            self._with_conn(cv.list_files, "could not list CVs")
+
+        def api_cv_download(self, match, parsed):
+            conn = db.connect(settings)
+            try:
+                row = cv.fetch(conn, int(match.group("id")))
+            finally:
+                conn.close()
+            if row is None:
+                self._send(404, {"error": "not found"})
+                return
+            try:
+                data = Path(row["path"]).read_bytes()
+            except OSError:
+                self._send(404, {"error": "file missing from disk"})
+                return
+            # attachment + nosniff: the stored bytes came from outside, and this
+            # server's origin is the same one the dashboard runs on. A file that
+            # renders as HTML here would run as the dashboard.
+            self._send_bytes(200, data, row["content_type"], {
+                "Content-Disposition": f'attachment; filename="{row["filename"]}"',
+                "X-Content-Type-Options": "nosniff",
+            })
+
+        def post_cv(self, match, parsed):
+            raw = self._body(limit=cv.MAX_BYTES * 2)
+            if raw is None:
+                return
+            try:
+                filename, data = cv.parse_upload(raw)
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            self._with_conn(lambda conn: cv.store(conn, filename, data),
+                            "could not store the CV")
+
+        def post_lookup_url(self, match, parsed):
+            raw = self._body()
+            if raw is None:
+                return
+            try:
+                payload = json.loads(raw)
+                url = payload.get("url")
+                if not isinstance(url, str) or not url.strip():
+                    raise ValueError("url is required")
+                result = manual.extract(url.strip())
+            except ValueError as exc:
+                self._send(400, {"error": str(exc)})
+                return
+            except Exception as exc:
+                traceback.print_exc(file=sys.stderr)
+                self._send(400, {"error": f"could not read that page ({type(exc).__name__})"})
+                return
+            self._send(200, result)
 
         def log_message(self, fmt, *args):
             # Default logging writes to stderr on every request, including the

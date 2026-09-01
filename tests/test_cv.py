@@ -85,3 +85,9 @@ def test_the_stored_name_is_the_hash_not_the_uploaded_name(tmp_path):
     # Path traversal has nothing to grab: the client's filename never reaches disk.
     digest, path = write_file(PDF, ".pdf", str(tmp_path))
     assert path.endswith(f"{digest}.pdf")
+
+
+def test_a_filename_cannot_inject_a_response_header():
+    filename, _ = parse_upload(upload(
+        filename='cv".pdf\r\nX-Evil: 1', content=base64.b64encode(PDF).decode()))
+    assert "\r" not in filename and '"' not in filename

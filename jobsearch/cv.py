@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -48,6 +49,11 @@ def parse_upload(raw: str | bytes) -> tuple[str, bytes]:
         raise ValueError("filename is required")
     if len(filename) > MAX_FILENAME:
         raise ValueError(f"filename too long: {len(filename)} > {MAX_FILENAME}")
+    # The download route quotes this filename straight into a Content-Disposition
+    # header; strip what would let it inject a header or escape the quoting.
+    filename = re.sub(r'[\r\n"\\]', "", filename.strip())
+    if not filename:
+        raise ValueError("filename is required")
 
     content = payload.get("content")
     if not isinstance(content, str) or not content:
