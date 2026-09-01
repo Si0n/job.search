@@ -52,18 +52,23 @@ def parse_upload(raw: str | bytes) -> tuple[str, bytes]:
     content = payload.get("content")
     if not isinstance(content, str) or not content:
         raise ValueError("content is required")
-    # Checked before decoding: base64 inflates by 4/3, so refusing here means
-    # never materialising an oversized file in memory.
-    if len(content) > (MAX_BYTES // 3) * 4 + 4:
-        raise ValueError(f"file too large: limit is {MAX_BYTES} bytes")
+    # Compute exact decoded size before touching base64.b64decode, so an
+    # oversized file is never materialised in memory. Base64 encodes every 3
+    # bytes as 4 characters; the decoded size is the inverse.
+    if len(content) % 4 != 0:
+        raise ValueError("content is not valid base64")
+    padding = 0
+    if content.endswith("="):
+        padding = content.count("=")
+    decoded_size = (len(content) // 4) * 3 - padding
+    if decoded_size > MAX_BYTES:
+        raise ValueError(f"file too large: {decoded_size} > {MAX_BYTES}")
     try:
         data = base64.b64decode(content, validate=True)
     except (binascii.Error, ValueError):
         raise ValueError("content is not valid base64") from None
     if not data:
         raise ValueError("content is empty")
-    if len(data) > MAX_BYTES:
-        raise ValueError(f"file too large: {len(data)} > {MAX_BYTES}")
     return filename.strip(), data
 
 

@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from jobsearch import cv
 from jobsearch.cv import MAX_BYTES, parse_upload, sniff, write_file
 
 PDF = b"%PDF-1.7\n1 0 obj\n<< >>\nendobj\n"
@@ -50,10 +51,26 @@ def test_a_malformed_upload_is_rejected(payload, match):
         parse_upload(upload(**payload))
 
 
-def test_an_oversized_upload_is_rejected_before_it_is_decoded():
+def test_an_oversized_upload_is_rejected_without_decoding(monkeypatch):
+    # The guard's whole purpose is that an oversized body is never materialised.
+    # Reaching b64decode at all means it failed, so make that reach an error.
     oversized = base64.b64encode(b"x" * (MAX_BYTES + 1)).decode()
+
+    def explode(*args, **kwargs):
+        raise AssertionError("b64decode was reached — the size guard did not run first")
+
+    monkeypatch.setattr(cv.base64, "b64decode", explode)
     with pytest.raises(ValueError, match="too large"):
         parse_upload(upload(filename="cv.pdf", content=oversized))
+
+
+def test_an_upload_at_exactly_the_limit_is_accepted():
+    # The other side of the boundary: the exact arithmetic must not reject a
+    # legitimate maximum-size file.
+    payload = b"%PDF-" + b"x" * (MAX_BYTES - 5)
+    filename, data = parse_upload(upload(
+        filename="cv.pdf", content=base64.b64encode(payload).decode()))
+    assert len(data) == MAX_BYTES
 
 
 def test_the_same_bytes_are_written_once(tmp_path):
