@@ -1603,9 +1603,9 @@ Expected: PASS
 .venv/bin/python - <<'EOF'
 from jobsearch import config, cv, db
 conn = db.connect(config.load_settings(".env"))
-data = open("serhii-drozh-cv.pdf", "rb").read()
-print("first:", cv.store(conn, "serhii-drozh-cv.pdf", data))
-print("again:", cv.store(conn, "serhii-drozh-cv.pdf", data))
+data = open("serhii-drozh-engineer-cv.pdf", "rb").read()
+print("first:", cv.store(conn, "serhii-drozh-engineer-cv.pdf", data))
+print("again:", cv.store(conn, "serhii-drozh-engineer-cv.pdf", data))
 print("listed:", cv.list_files(conn))
 conn.close()
 EOF
@@ -2621,12 +2621,12 @@ def test_a_filename_cannot_inject_a_response_header():
 .venv/bin/python -m pytest tests/test_cv.py -q
 .venv/bin/jobsearch serve --port 8799 &
 sleep 2
-B64=$(.venv/bin/python -c "import base64;print(base64.b64encode(open('serhii-drozh-cv.pdf','rb').read()).decode())")
+B64=$(.venv/bin/python -c "import base64;print(base64.b64encode(open('serhii-drozh-engineer-cv.pdf','rb').read()).decode())")
 .venv/bin/python -c "
-import json;print(json.dumps({'filename':'serhii-drozh-cv.pdf','content':'''$B64'''}))" > /tmp/cv.json
+import json;print(json.dumps({'filename':'serhii-drozh-engineer-cv.pdf','content':'''$B64'''}))" > /tmp/cv.json
 curl -s -H 'Content-Type: application/json' --data-binary @/tmp/cv.json http://127.0.0.1:8799/api/cv; echo
 curl -s -D- -o /tmp/out.pdf http://127.0.0.1:8799/api/cv/1 | grep -i "content-disposition\|nosniff\|content-type"
-cmp serhii-drozh-cv.pdf /tmp/out.pdf && echo "bytes identical"
+cmp serhii-drozh-engineer-cv.pdf /tmp/out.pdf && echo "bytes identical"
 curl -s -H 'Content-Type: application/json' -d '{"url":"http://169.254.169.254/latest/meta-data/"}' \
      http://127.0.0.1:8799/api/lookup-url; echo
 curl -s -H 'Content-Type: application/json' -d '{"url":"https://boards.greenhouse.io/anthropic/jobs/4020295008"}' \

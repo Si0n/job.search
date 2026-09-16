@@ -164,7 +164,7 @@ and not `created_at`: a call belongs to the week it happened in.
 | `uploaded_at` | DATETIME | |
 
 Content-addressed because the point is fidelity: the CV is edited over time, and the
-record must be of the file actually sent, not of whatever `serhii-drozh-cv.pdf` happens
+record must be of the file actually sent, not of whatever `serhii-drozh-engineer-cv.pdf` happens
 to contain today. Re-using last week's CV across ten applications stores it once.
 
 It is a file table, not a document manager. `sha256` plus immutable files is the whole

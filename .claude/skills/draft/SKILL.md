@@ -50,7 +50,7 @@ strengths and weaknesses, and the owner's profile. Read the dimension notes: the
 what is genuinely strong and genuinely weak about this match, and the cover letter
 should lean on the strong parts rather than claiming everything is a fit.
 
-Also read the CV at `serhii-drozh-cv.pdf` for the concrete facts. Everything you claim
+Also read the CV at `serhii-drozh-engineer-cv.pdf` for the concrete facts. Everything you claim
 must come from it or the profile. Never invent a number, a company, or a technology.
 
 ## Step 3 — Write three blocks
